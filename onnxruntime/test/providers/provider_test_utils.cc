@@ -700,6 +700,7 @@ void OpTester::Run(
         kOpenVINOExecutionProvider,
         kDmlExecutionProvider,
         kAclExecutionProvider,
+        kHipExecutionProvider
     };
 
     bool has_run = false;
@@ -765,6 +766,8 @@ void OpTester::Run(
           execution_provider = DefaultNnapiExecutionProvider();
         else if (provider_type == onnxruntime::kAclExecutionProvider)
           execution_provider = DefaultAclExecutionProvider();
+        else if (provider_type == onnxruntime::kHipExecutionProvider)
+          execution_provider = DefaultHipExecutionProvider();
         // skip if execution provider is disabled
         if (execution_provider == nullptr)
           continue;
@@ -788,6 +791,7 @@ void OpTester::Run(
               reg->TryFindKernel(node, execution_provider->Type());
           if (!kci) {
             valid = false;
+            std::cerr << "No kernel registered from EP: " << provider_type << "for node: " << node.OpType() << std::endl;
             for (auto& custom_session_registry : custom_session_registries_) {
               if (custom_session_registry->GetKernelRegistry()->TryFindKernel(
                       node, execution_provider->Type())) {
@@ -813,7 +817,7 @@ void OpTester::Run(
             session_object
                 .RegisterExecutionProvider(std::move(execution_provider))
                 .IsOK());
-
+        std::cerr << "Running on EP: " << provider_type << std::endl;
         fetches_ = ExecuteModel<InferenceSession>(
             *p_model, session_object, expect_result, expected_failure_string,
             run_options, feeds, output_names, provider_type,
