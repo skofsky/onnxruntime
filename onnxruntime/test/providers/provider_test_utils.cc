@@ -791,7 +791,6 @@ void OpTester::Run(
               reg->TryFindKernel(node, execution_provider->Type());
           if (!kci) {
             valid = false;
-            std::cerr << "No kernel registered from EP: " << provider_type << "for node: " << node.OpType() << std::endl;
             for (auto& custom_session_registry : custom_session_registries_) {
               if (custom_session_registry->GetKernelRegistry()->TryFindKernel(
                       node, execution_provider->Type())) {
@@ -801,7 +800,10 @@ void OpTester::Run(
             }
 
             if (!valid)
+            {
+              std::cerr << "No kernel registered from EP: " << provider_type << "for node: " << node.OpType() << std::endl;
               break;
+            }
           }
         }
 
