@@ -18,14 +18,6 @@ import torch.optim as optim
 from torchvision import datasets, transforms
 import numpy as np
 
-# TODO: remove after ready for CV
-# import sys
-# sys.path.insert(0, '/bert_ort/liqun/onnxruntime/build/Linux/Debug/')
-# import onnxruntime as ort
-
-# sys.path.insert(0, '/bert_ort/liqun/onnxruntime/onnxruntime/python/')
-# from ort_trainer import IODescription, ModelDescription, ORTTrainer, ORTModel
-
 from onnxruntime.capi.ort_trainer import IODescription, ModelDescription, ORTTrainer, ORTModel
 
 class NeuralNet(nn.Module):
