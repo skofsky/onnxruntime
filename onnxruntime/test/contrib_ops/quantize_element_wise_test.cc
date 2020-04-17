@@ -60,7 +60,8 @@ RunQLinearMathTestFromFloat(
     throw std::runtime_error("Input size not match input shape!");
   }
   const float qmax = std::numeric_limits<T>::max();
-  const float qmin = ((std::numeric_limits<T>::min() == -128) ? -127.0f : static_cast<float>(std::numeric_limits<T>::min()));
+  //const float qmin = ((std::numeric_limits<T>::min() == -128) ? -127.0f : static_cast<float>(std::numeric_limits<T>::min()));
+  const float qmin = std::numeric_limits<T>::min();
 
   OpTester test(op_name, 1, onnxruntime::kMSDomain);
   std::vector<T> a_quantized(a.size());
@@ -101,61 +102,71 @@ RunQLinearMathTestFromFloat(
 }
 
 TEST(QuantizeLinearContribMathOpTest, AddUInt8) {
-  std::vector<float> A = {0.8f, 0.3f, 0.1f, -0.5f, -0.2f, -0.6f, -0.9f, 0.0f, -1.0f, 1.0f};
-  float A_scale = 2.0f / 255.0f;
+  std::vector<float> A = {0.0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f,
+                          0.8f, 0.9f, 1.0f, 0.12f, 0.22f, 0.75f, 0.0f,
+                          -0.0f, -0.1f, -0.2f, -0.3f, -0.4f, -0.5f, -0.6f, -0.7f,
+                          -0.8f, -0.9f, -1.0f, -0.12f, -0.22f, -0.75f, -0.0f};
+  float A_scale = 2.0f / 128.0f;
   uint8_t A_zero_point = 128;
-  std::vector<float> B = {-2.0f, -1.0f, 2.0f, 0.3f, 0.9f};
-  float B_scale = 4.0f / 255.0f;
+  std::vector<float> B = {0.5f, -1.0f, 2.0f, 1.0f, -2.0f, -0.5f, -0.5f, 1.5f,
+                          -1.5f, 0.3f, -0.3f, 0.7f, -0.7f, -0.25f, -0.5f, };
+  float B_scale = 4.0f / 128.0f;
   uint8_t B_zero_point = 128;
-  float C_scale = 6.0f / 255.0f;
+  float C_scale = 6.0f / 128.0f;
   uint8_t C_zero_point = 128;
 
   auto add_function = [](float a_dequantized, float b_dequantized) {
     return a_dequantized + b_dequantized;
   };
 
+  const int64_t legth_b = B.size();
   RunQLinearMathTestFromFloat("QLinearAdd", add_function,
-    A, {2, 5}, A_scale, A_zero_point, B, {1, 5}, B_scale, B_zero_point, C_scale, C_zero_point);
+    A, {2, legth_b}, A_scale, A_zero_point, B, {1, legth_b}, B_scale, B_zero_point, C_scale, C_zero_point);
 
   RunQLinearMathTestFromFloat("QLinearAdd", add_function,
-    A, {5, 2}, A_scale, A_zero_point, B, {5, 1}, B_scale, B_zero_point, C_scale, C_zero_point);
+    A, {legth_b, 2}, A_scale, A_zero_point, B, {legth_b, 1}, B_scale, B_zero_point, C_scale, C_zero_point);
 
   RunQLinearMathTestFromFloat("QLinearAdd", add_function,
-    B, {5, 1}, B_scale, B_zero_point, A, {5, 2}, A_scale, A_zero_point, C_scale, C_zero_point);
+    B, {legth_b, 1}, B_scale, B_zero_point, A, {legth_b, 2}, A_scale, A_zero_point, C_scale, C_zero_point);
 }
 
 TEST(QuantizeLinearContribMathOpTest, AddInt8) {
-  std::vector<float> A = {0.8f, 0.3f, 0.1f, -0.5f, -0.2f, -0.6f, -0.9f, 0.0f, -1.0f, 1.0f};
-  float A_scale = 2.0f / 255.0f;
+  std::vector<float> A = {0.0f, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f,
+                          0.8f, 0.9f, 1.0f, 0.12f, 0.22f, 0.75f, 0.0f,
+                          -0.0f, -0.1f, -0.2f, -0.3f, -0.4f, -0.5f, -0.6f, -0.7f,
+                          -0.8f, -0.9f, -1.0f, -0.12f, -0.22f, -0.75f, -0.0f};
+  float A_scale = 2.0f / 128.0f;
   int8_t A_zero_point = 0;
-  std::vector<float> B = {-2.0f, -1.0f, 2.0f, 0.3f, 0.9f};
-  float B_scale = 4.0f / 255.0f;
+  std::vector<float> B = {0.5f, -1.0f, 2.0f, 1.0f, -2.0f, -0.5f, -0.5f, 1.5f,
+                          -1.5f, 0.3f, -0.3f, 0.7f, -0.7f, -0.25f, -0.5f, };
+  float B_scale = 4.0f / 128.0f;
   int8_t B_zero_point = 0;
-  float C_scale = 6.0f / 255.0f;
+  float C_scale = 6.0f / 128.0f;
   int8_t C_zero_point = 0;
 
   auto add_function = [](float a_dequantized, float b_dequantized) {
     return a_dequantized + b_dequantized;
   };
 
+  const int64_t legth_b = B.size();
   RunQLinearMathTestFromFloat("QLinearAdd", add_function,
-    A, {2, 5}, A_scale, A_zero_point, B, {1, 5}, B_scale, B_zero_point, C_scale, C_zero_point);
+    A, {2, legth_b}, A_scale, A_zero_point, B, {1, legth_b}, B_scale, B_zero_point, C_scale, C_zero_point);
 
   RunQLinearMathTestFromFloat("QLinearAdd", add_function,
-    A, {5, 2}, A_scale, A_zero_point, B, {5, 1}, B_scale, B_zero_point, C_scale, C_zero_point);
+    A, {legth_b, 2}, A_scale, A_zero_point, B, {legth_b, 1}, B_scale, B_zero_point, C_scale, C_zero_point);
 
   RunQLinearMathTestFromFloat("QLinearAdd", add_function,
-    B, {5, 1}, B_scale, B_zero_point, A, {5, 2}, A_scale, A_zero_point, C_scale, C_zero_point);
+    B, {legth_b, 1}, B_scale, B_zero_point, A, {legth_b, 2}, A_scale, A_zero_point, C_scale, C_zero_point);
 }
 
 TEST(QuantizeLinearContribMathOpTest, MulUInt8) {
   std::vector<float> A = {0.8f, 0.3f, 0.1f, -0.5f, -0.2f, -0.6f, -0.9f, 0.0f, -1.0f, 1.0f};
-  float A_scale = 2.0f / 255.0f;
+  float A_scale = 2.0f / 128.0f;
   uint8_t A_zero_point = 128;
   std::vector<float> B = {-2.0f, -1.0f, 2.0f, 0.3f, 0.9f};
-  float B_scale = 4.0f / 255.0f;
+  float B_scale = 4.0f / 128.0f;
   uint8_t B_zero_point = 128;
-  float C_scale = 4.0f / 255.0f;
+  float C_scale = 4.0f / 128.0f;
   uint8_t C_zero_point = 128;
 
   auto mul_function = [](float a_dequantized, float b_dequantized) {

@@ -114,7 +114,8 @@ C_UNDERSCORE(MlasQLinearAddAvx2Int8):
         vminps  ymm8,ymm8,ymm6
         vcvtps2dq ymm8,ymm8
         vpaddd  ymm8,ymm8,ymm5
-        vpackssdw ymm8,ymm8,ymm8
+        vperm2f128 ymm9,ymm8,ymm8,1
+        vpackssdw ymm8,ymm8,ymm9
         vpacksswb ymm8,ymm8,ymm8
         movsd   QWORD PTR [rdx],xmm8
 
@@ -143,13 +144,14 @@ C_UNDERSCORE(MlasQLinearAddAvx2Int8):
         vminps  ymm8,ymm8,ymm6
         vcvtps2dq ymm8,ymm8
         vpaddd  ymm8,ymm8,ymm5
-        vpackssdw ymm8,ymm8,ymm8
+        vperm2f128 ymm9,ymm8,ymm8,1
+        vpackssdw ymm8,ymm8,ymm9
         vpacksswb ymm8,ymm8,ymm8
         pextrq  rax,xmm8,0
 
 .LQLinearAddAvx2Int8StoreLoop:
         mov     BYTE PTR [rdx],al
-        shl     rax,8
+        shr     rax,8
         inc     rdx
         dec     rcx
         jnz     .LQLinearAddAvx2Int8StoreLoop
@@ -241,8 +243,9 @@ C_UNDERSCORE(MlasQLinearAddAvx2UInt8):
         vminps  ymm8,ymm8,ymm6
         vcvtps2dq ymm8,ymm8
         vpaddd  ymm8,ymm8,ymm5
-        vpackssdw ymm8,ymm8,ymm8
-        vpacksswb ymm8,ymm8,ymm8
+        vperm2f128 ymm9,ymm8,ymm8,1
+        vpackusdw ymm8,ymm8,ymm9
+        vpackuswb ymm8,ymm8,ymm8
         movsd   QWORD PTR [rdx],xmm8
 
         add     rdi,8
@@ -255,11 +258,11 @@ C_UNDERSCORE(MlasQLinearAddAvx2UInt8):
         add     rcx,8
         jz      .LQLinearAddAvx2UInt8Exit
 
-        vpmovsxbd ymm8,[rdi]
+        vpmovzxbd ymm8,[rdi]
         vpsubd  ymm8,ymm8,ymm3
         vcvtdq2ps ymm8,ymm8
         vmulps  ymm8,ymm8,ymm0
-        vpmovsxbd ymm9,[rsi]
+        vpmovzxbd ymm9,[rsi]
         vpsubd  ymm9,ymm9,ymm4
         vcvtdq2ps ymm9,ymm9
         vmulps  ymm9,ymm9,ymm1
@@ -270,13 +273,14 @@ C_UNDERSCORE(MlasQLinearAddAvx2UInt8):
         vminps  ymm8,ymm8,ymm6
         vcvtps2dq ymm8,ymm8
         vpaddd  ymm8,ymm8,ymm5
-        vpackssdw ymm8,ymm8,ymm8
-        vpacksswb ymm8,ymm8,ymm8
+        vperm2f128 ymm9,ymm8,ymm8,1
+        vpackusdw ymm8,ymm8,ymm9
+        vpackuswb ymm8,ymm8,ymm8
         pextrq    rax,xmm8,0
 
 .LQLinearAddAvx2UInt8StoreLoop:
         mov     BYTE PTR [rdx],al
-        shl     rax,8
+        shr     rax,8
         inc     rdx
         dec     rcx
         jnz     .LQLinearAddAvx2UInt8StoreLoop
