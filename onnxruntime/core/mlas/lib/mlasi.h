@@ -451,6 +451,41 @@ void
 
 typedef MLAS_ELEMENTWISE_KERNEL_ROUTINE* PMLAS_ELEMENTWISE_KERNEL_ROUTINE;
 
+
+typedef
+void
+(MLASCALL MLAS_QUANTIZE_INT8_BINARY_ELEMENTWISE_KERNEL_ROUTINE) (
+    const int8_t* InputA,
+    float ScaleA,
+    int8_t ZeroPointA,
+    const int8_t* InputB,
+    float ScaleB,
+    int8_t ZeroPointB,
+    float ScaleC,
+    int8_t ZeroPointC,
+    int8_t* OutputC,
+    size_t N
+);
+
+typedef MLAS_QUANTIZE_INT8_BINARY_ELEMENTWISE_KERNEL_ROUTINE* PMLAS_QUANTIZE_INT8_BINARY_ELEMENTWISE_KERNEL_ROUTINE;
+
+typedef
+void
+(MLASCALL MLAS_QUANTIZE_UINT8_BINARY_ELEMENTWISE_KERNEL_ROUTINE) (
+    const uint8_t* InputA,
+    float ScaleA,
+    uint8_t ZeroPointA,
+    const uint8_t* InputB,
+    float ScaleB,
+    uint8_t ZeroPointB,
+    float ScaleC,
+    uint8_t ZeroPointC,
+    uint8_t * OutputC,
+    size_t N
+);
+
+typedef MLAS_QUANTIZE_UINT8_BINARY_ELEMENTWISE_KERNEL_ROUTINE* PMLAS_QUANTIZE_UINT8_BINARY_ELEMENTWISE_KERNEL_ROUTINE;
+
 extern "C" {
 
 #if defined(MLAS_TARGET_AMD64_IX86)
@@ -548,6 +583,8 @@ extern "C" {
     MLAS_ELEMENTWISE_KERNEL_ROUTINE MlasLogisticKernelFma3;
     MLAS_ELEMENTWISE_KERNEL_ROUTINE MlasTanhKernelFma3;
     MLAS_ELEMENTWISE_KERNEL_ROUTINE MlasErfKernelFma3;
+    MLAS_QUANTIZE_INT8_BINARY_ELEMENTWISE_KERNEL_ROUTINE MlasQLinearAddAvx2Int8;
+    MLAS_QUANTIZE_UINT8_BINARY_ELEMENTWISE_KERNEL_ROUTINE MlasQLinearAddAvx2UInt8;
 #endif
 
 }
@@ -631,6 +668,8 @@ struct MLAS_PLATFORM {
     PMLAS_ELEMENTWISE_KERNEL_ROUTINE LogisticKernelRoutine;
     PMLAS_ELEMENTWISE_KERNEL_ROUTINE TanhKernelRoutine;
     PMLAS_ELEMENTWISE_KERNEL_ROUTINE ErfKernelRoutine;
+    PMLAS_QUANTIZE_INT8_BINARY_ELEMENTWISE_KERNEL_ROUTINE QLinearAddInt8Routine;
+    PMLAS_QUANTIZE_UINT8_BINARY_ELEMENTWISE_KERNEL_ROUTINE QLinearAddUInt8Routine;
     uint32_t NchwcBlockSize;
     uint32_t PreferredBufferAlignment;
 #endif

@@ -253,8 +253,7 @@ MlasQuantizeLinearUnpackBytes<int8_t>(
     return IntegerVector;
 }
 
-template<typename DataType, int32_t MinimumValue, int32_t MaximumValue>
-MLAS_FORCEINLINE
+template<typename DataType>
 void
 MlasQuantizeLinearAddKernel(
     const DataType* InputA,
@@ -269,6 +268,9 @@ MlasQuantizeLinearAddKernel(
     size_t N
     )
 {
+    constexpr int32_t MinimumValue = std::numeric_limits<DataType>::min();
+    constexpr int32_t MaximumValue = std::numeric_limits<DataType>::max();
+
     const auto ScaleVectorA = MlasBroadcastFloat32x4(ScaleA);
     const auto ScaleVectorB = MlasBroadcastFloat32x4(ScaleB);
     const auto ScaleVectorC = MlasBroadcastFloat32x4(ScaleC);
@@ -339,8 +341,7 @@ MlasQuantizeLinearKernel(
 }
 
 
-template<typename DataType, int32_t MinimumValue, int32_t MaximumValue>
-MLAS_FORCEINLINE
+template<typename DataType>
 void
 MlasQuantizeLinearAddKernel(
     const DataType* InputA,
@@ -355,6 +356,9 @@ MlasQuantizeLinearAddKernel(
     size_t N
     )
 {
+    constexpr int32_t MinimumValue = std::numeric_limits<DataType>::min();
+    constexpr int32_t MaximumValue = std::numeric_limits<DataType>::max();
+
     for (size_t n = 0; n < N; n++) {
         float ValueA = (float(InputA[n]) - float(ZeroPointA)) * ScaleA;
         float ValueB = (float(InputB[n]) - float(ZeroPointB)) * ScaleB;
@@ -453,8 +457,12 @@ MlasQuantizeLinearAdd<int8_t>(
     size_t N
     )
 {
-    MlasQuantizeLinearAddKernel<int8_t, -127, 127>(
+#if defined(MLAS_TARGET_AMD64)
+    MlasPlatform.QLinearAddInt8Routine(InputA, ScaleA, ZeroPointA, InputB, ScaleB, ZeroPointB, ScaleC, ZeroPointC, OutputC, N);
+#else
+    MlasQuantizeLinearAddKernel<int8_t>(
         InputA, ScaleA, ZeroPointA, InputB, ScaleB, ZeroPointB, ScaleC, ZeroPointC, OutputC, N);
+#endif
 }
 
 template<>
@@ -473,8 +481,12 @@ MlasQuantizeLinearAdd<uint8_t>(
     size_t N
     )
 {
-    MlasQuantizeLinearAddKernel<uint8_t, 0, 255>(
+#if defined(MLAS_TARGET_AMD64)
+    MlasPlatform.QLinearAddUInt8Routine(InputA, ScaleA, ZeroPointA, InputB, ScaleB, ZeroPointB, ScaleC, ZeroPointC, OutputC, N);
+#else
+    MlasQuantizeLinearAddKernel<uint8_t>(
         InputA, ScaleA, ZeroPointA, InputB, ScaleB, ZeroPointB, ScaleC, ZeroPointC, OutputC, N);
+#endif
 }
 
 #if defined(MLAS_SSE2_INTRINSICS)
