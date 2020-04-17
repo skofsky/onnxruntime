@@ -152,7 +152,9 @@ Status ParseArguments(int argc, char* argv[], BertParameters& params, OrtParamet
       ("data_parallel_size", "Data parallel group size.", cxxopts::value<int>()->default_value("1"))
       ("horizontal_parallel_size", "Horizontal model parallel group size.", cxxopts::value<int>()->default_value("1"))
       ("enable_grad_norm_clip", "Specify whether to enable gradient clipping for optimizers.",
-        cxxopts::value<bool>()->default_value("true"));
+        cxxopts::value<bool>()->default_value("true"))
+      ("min_memory_swap_gaps", "Specify topological gaps between FW and BW to eanble memory swap. 0 to disable",
+        cxxopts::value<int>()->default_value("0"));
   options
     .add_options("ORT configuration")
       ("ort_log_severity", "ORT minimum logging severity (see onnxruntime::logging::Severity values)",
@@ -312,6 +314,7 @@ Status ParseArguments(int argc, char* argv[], BertParameters& params, OrtParamet
 
     params.partition_optimizer = flags["partition_optimizer"].as<bool>();
     params.enable_grad_norm_clip = flags["enable_grad_norm_clip"].as<bool>();
+    params.min_memory_swap_gaps = flags["min_memory_swap_gaps"].as<int>();
     float alpha = flags["alpha"].as<float>();
     float beta = flags["beta"].as<float>();
     float lambda = flags["lambda"].as<float>();
@@ -344,16 +347,14 @@ Status ParseArguments(int argc, char* argv[], BertParameters& params, OrtParamet
           {"lambda", zero_lambda ? 0.f : lambda},
           {"epsilon", epsilon},
           {"ratio_min", ratio_min},
-          {"ratio_max", ratio_max}
-      };
+          {"ratio_max", ratio_max}};
     };
 
     // Optimizer's int attributes.
     params.optimizer_int_attributes = [=](const std::string& /*weight*/) {
       return std::unordered_map<std::string, int64_t>{
           {"do_bias_correction", do_bias_correction ? static_cast<int64_t>(1) : static_cast<int64_t>(0)},
-          {"weight_decay_mode", weight_decay_mode}
-      };
+          {"weight_decay_mode", weight_decay_mode}};
     };
 
     params.data_parallel_size = flags["data_parallel_size"].as<int>();
@@ -363,7 +364,7 @@ Status ParseArguments(int argc, char* argv[], BertParameters& params, OrtParamet
 
     int64_t seed = flags["seed"].as<int64_t>();
     if (params.horizontal_parallel_size > 1 && seed <= 0) {
-      seed = 8211; // Megatron needs a random seed.
+      seed = 8211;  // Megatron needs a random seed.
     }
     if (seed > 0) {
       utils::SetRandomSeed(seed);

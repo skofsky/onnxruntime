@@ -2,7 +2,11 @@
 
 ONNX Runtime Trainer is a test feature introduced in the ONNX Runtime engine. This trainer can be used to accelerate the computation of the ops used to train transformer class models.
 
+<<<<<<< HEAD
 The ONNX Runtime trainer can be used with your existing PyTorch training code to accelerate execution on NVIDIA GPU clusters.
+=======
+The ONNX Runtime trainer can be used with your existing Pytorch training code to accelerate execution on NVIDIA GPU clusters.
+>>>>>>> e71304a... doc update
 
 ## Build on Linux
 
@@ -38,7 +42,11 @@ sudo ldconfig
 
 ```
 export CUDA_HOME=<location for CUDA libs> # e.g. /usr/local/cuda
+<<<<<<< HEAD
 export CUDNN_HOME=<location for cuDNN libs> # e.g. /usr/local/cuda
+=======
+export CUDNN_HOME=<location for cuDNN libs> # e.g. /usr/local/cudnn_7.6.2/cuda
+>>>>>>> e71304a... doc update
 export CUDACXX=<location for NVCC> #e.g. /usr/local/cuda/bin/nvcc
 export PATH=<location for openmpi/bin/>:$PATH
 export LD_LIBRARY_PATH=<location for openmpi/lib/>:$LD_LIBRARY_PATH
@@ -79,6 +87,10 @@ for t in range(1000):
     # forward + backward + weight update 
     loss, y_pred = trainer.step(x, y)
     ...
+<<<<<<< HEAD
+=======
+    
+>>>>>>> e71304a... doc update
 ```
 
 A sample for end-to-end training with ONNX Runtime trainer is *coming soon*.

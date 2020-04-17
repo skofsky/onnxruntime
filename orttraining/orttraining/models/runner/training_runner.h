@@ -152,7 +152,10 @@ class TrainingRunner {
     int data_parallel_size = 1;
     int horizontal_parallel_size = 1;
     // Enable gradient clipping.
-    bool enable_grad_norm_clip=true;
+    bool enable_grad_norm_clip = true;
+
+    // gaps in topological sort order for FW/BW memory swap. 0 to disable
+    int min_memory_swap_gaps = 0;
   };
 
   TrainingRunner(Parameters params, const Environment& env);

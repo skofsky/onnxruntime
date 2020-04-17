@@ -131,6 +131,12 @@ Status TrainingRunner::Initialize() {
     config.gist_config = gist;
   }
 
+  if (params_.min_memory_swap_gaps) {
+    TrainingSession::TrainingConfiguration::MemorySwapConfiguration memswap{};
+    memswap.min_topo_distance = params_.min_memory_swap_gaps;
+    config.memswap_config = memswap;
+  }
+
   TrainingSession::TrainingConfigurationResult config_result{};
 
   ORT_RETURN_IF_ERROR(session_.ConfigureForTraining(config, config_result));
