@@ -24,12 +24,6 @@ This is a central place to see the latest build status for ort_training.
 
 [![](https://dev.azure.com/onnxruntime/onnxruntime/_apis/build/status/9?branchName=ort_training&label=Win+CPU)](https://dev.azure.com/onnxruntime/onnxruntime/_build/latest?branchName=ort_training&definitionId=9)
 
-[![](https://dev.azure.com/onnxruntime/onnxruntime/_apis/build/status/62?branchName=ort_training&label=Win+CPU+NoContribOps)](https://dev.azure.com/onnxruntime/onnxruntime/_build/latest?branchName=ort_training&definitionId=62)
-
-[![](https://dev.azure.com/onnxruntime/onnxruntime/_apis/build/status/59?branchName=ort_training&label=Win+CPU+x86)](https://dev.azure.com/onnxruntime/onnxruntime/_build/latest?branchName=ort_training&definitionId=59)
-
-[![](https://dev.azure.com/onnxruntime/onnxruntime/_apis/build/status/61?branchName=ort_training&label=Win+CPU+x86+NoContribOps)](https://dev.azure.com/onnxruntime/onnxruntime/_build/latest?branchName=ort_training&definitionId=61)
-
 [![](https://dev.azure.com/onnxruntime/onnxruntime/_apis/build/status/10?branchName=ort_training&label=Windows+GPU)](https://dev.azure.com/onnxruntime/onnxruntime/_build/latest?branchName=ort_training&definitionId=10)
 
 [![](https://dev.azure.com/onnxruntime/onnxruntime/_apis/build/status/47?branchName=ort_training&label=Win+GPU+TensorRT)](https://dev.azure.com/onnxruntime/onnxruntime/_build/latest?branchName=ort_training&definitionId=47)
