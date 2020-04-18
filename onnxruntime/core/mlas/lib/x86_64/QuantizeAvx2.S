@@ -116,7 +116,7 @@ C_UNDERSCORE(MlasQLinearAddAvx2Int8):
         vpaddd  ymm8,ymm8,ymm5
         vperm2f128 ymm9,ymm8,ymm8,1
         vpackssdw ymm8,ymm8,ymm9
-        vpacksswb ymm8,ymm8,ymm8
+        vpacksswb xmm8,xmm8,xmm8
         movsd   QWORD PTR [rdx],xmm8
 
         add     rdi,8
@@ -146,7 +146,7 @@ C_UNDERSCORE(MlasQLinearAddAvx2Int8):
         vpaddd  ymm8,ymm8,ymm5
         vperm2f128 ymm9,ymm8,ymm8,1
         vpackssdw ymm8,ymm8,ymm9
-        vpacksswb ymm8,ymm8,ymm8
+        vpacksswb xmm8,xmm8,xmm8
         pextrq  rax,xmm8,0
 
 .LQLinearAddAvx2Int8StoreLoop:
@@ -245,7 +245,7 @@ C_UNDERSCORE(MlasQLinearAddAvx2UInt8):
         vpaddd  ymm8,ymm8,ymm5
         vperm2f128 ymm9,ymm8,ymm8,1
         vpackusdw ymm8,ymm8,ymm9
-        vpackuswb ymm8,ymm8,ymm8
+        vpackuswb xmm8,xmm8,xmm8
         movsd   QWORD PTR [rdx],xmm8
 
         add     rdi,8
@@ -275,7 +275,7 @@ C_UNDERSCORE(MlasQLinearAddAvx2UInt8):
         vpaddd  ymm8,ymm8,ymm5
         vperm2f128 ymm9,ymm8,ymm8,1
         vpackusdw ymm8,ymm8,ymm9
-        vpackuswb ymm8,ymm8,ymm8
+        vpackuswb xmm8,xmm8,xmm8
         pextrq    rax,xmm8,0
 
 .LQLinearAddAvx2UInt8StoreLoop:
