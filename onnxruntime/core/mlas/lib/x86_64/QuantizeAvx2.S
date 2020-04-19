@@ -32,7 +32,12 @@ Abstract:
 
         .text
 
-
+        .p2align 5
+.LMM256PackBytesControlData:
+        .byte 0,4,8,12, 255,255,255,255, 255,255,255,255, 255,255,255,255
+        .byte 255,255,255,255, 0,4,8,12, 255,255,255,255, 255,255,255,255
+.LMM256PackBytesControlDataPermPS:
+        .int  0, 5, 2, 3, 4, 1, 6, 7
 /*++
     Generate function for QLienarBinaryElementwiseOp()
         DataType : Uint8 or Int8
@@ -91,6 +96,8 @@ C_UNDERSCORE(MlasQLinear\OpName\()Avx2\DataType\()):
         vbroadcastss ymm3,DWORD PTR QLinearBinaryElementwiseFrame_ZeroPointA[rsp]
         vbroadcastss ymm4,DWORD PTR QLinearBinaryElementwiseFrame_ZeroPointB[rsp]
         vbroadcastss ymm5,DWORD PTR QLinearBinaryElementwiseFrame_ZeroPointC[rsp]
+        vmovaps ymm10,.LMM256PackBytesControlData[rip]
+        vmovaps ymm11,.LMM256PackBytesControlDataPermPS[rip]
 
 .ifeqs "\DataType\()","Int8"
         mov     r8d,DWORD PTR 127
@@ -144,14 +151,21 @@ C_UNDERSCORE(MlasQLinear\OpName\()Avx2\DataType\()):
         vcvtps2dq ymm8,ymm8
         vpaddd  ymm8,ymm8,ymm5
 
-        vperm2f128 ymm9,ymm8,ymm8,1
-.ifeqs "\DataType\()","Int8"
-        vpackssdw ymm8,ymm8,ymm9
-        vpacksswb xmm8,xmm8,xmm8
-.else
-        vpackusdw ymm8,ymm8,ymm9
-        vpackuswb xmm8,xmm8,xmm8
-.endif
+        # TODO: unpack's better way
+        vpshufb ymm8,ymm8,ymm10
+        vpermps ymm8,ymm11,ymm8
+#        vperm2f128 ymm9,ymm8,ymm8,1
+#        vorps   ymm8,ymm8,ymm9
+
+#.ifeqs "\DataType\()","Int8"
+#        vperm2f128 ymm9,ymm8,ymm8,1
+#        vpackssdw ymm8,ymm8,ymm9
+#        vpacksswb xmm8,xmm8,xmm8
+#.else
+#        vperm2f128 ymm9,ymm8,ymm8,1
+#        vpackusdw ymm8,ymm8,ymm9
+#        vpackuswb xmm8,xmm8,xmm8
+#.endif
         movsd   QWORD PTR [rdx],xmm8
 
         add     rdi,8
@@ -190,14 +204,21 @@ C_UNDERSCORE(MlasQLinear\OpName\()Avx2\DataType\()):
         vcvtps2dq ymm8,ymm8
         vpaddd  ymm8,ymm8,ymm5
 
-        vperm2f128 ymm9,ymm8,ymm8,1
-.ifeqs "\DataType\()","Int8"
-        vpackssdw ymm8,ymm8,ymm9
-        vpacksswb xmm8,xmm8,xmm8
-.else
-        vpackusdw ymm8,ymm8,ymm9
-        vpackuswb xmm8,xmm8,xmm8
-.endif
+        vpshufb ymm8,ymm8,ymm10
+        vpermps ymm8,ymm11,ymm8
+#        vperm2f128 ymm9,ymm8,ymm8,1
+#        vorps   ymm8,ymm8,ymm9
+
+#.ifeqs "\DataType\()","Int8"
+#        vperm2f128 ymm9,ymm8,ymm8,1
+#        vpackssdw ymm8,ymm8,ymm9
+#        vpacksswb xmm8,xmm8,xmm8
+#.else
+#        vperm2f128 ymm9,ymm8,ymm8,1
+#        vpackusdw ymm8,ymm8,ymm9
+#        vpackuswb xmm8,xmm8,xmm8
+#.endif
+
         pextrq  rax,xmm8,0
 
 .LQLinear\OpName\()Avx2\DataType\()StoreLoop:
@@ -255,8 +276,8 @@ Return Value:
 
     None.
 --*/
-        .globl  C_UNDERSCORE(MlasQLinearVec\OpName\()ScalarAvx2\DataType\())
-C_UNDERSCORE(MlasQLinearVec\OpName\()ScalarAvx2\DataType\()):
+        .globl  C_UNDERSCORE(MlasQLinear\OpName\()ScalarAvx2\DataType\())
+C_UNDERSCORE(MlasQLinear\OpName\()ScalarAvx2\DataType\()):
         sub     rsp,QLinearBinaryElementwiseFrame_ReturnAddress
 
         mov     QLinearBinaryElementwiseFrame_ZeroPointA[rsp],rsi
@@ -339,7 +360,6 @@ C_UNDERSCORE(MlasQLinearVec\OpName\()ScalarAvx2\DataType\()):
         movsd   QWORD PTR [rdx],xmm8
 
         add     rdi,8
-        add     rsi,8
         add     rdx,8
         sub     rcx,8
         jae     .LQLinearVector\OpName\()ScalarAvx2\DataType\()Process8Loop
