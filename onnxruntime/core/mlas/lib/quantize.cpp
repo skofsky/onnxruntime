@@ -17,7 +17,7 @@ Abstract:
         Output = Saturate(RoundToEven(Input / Scale) + ZeroPoint)
 
 --*/
-
+#include <iostream>
 #include "mlasi.h"
 
 #if defined(MLAS_NEON64_INTRINSICS) || defined(MLAS_SSE2_INTRINSICS)
@@ -458,7 +458,17 @@ MlasQuantizeLinearAdd<int8_t>(
     )
 {
 #if defined(MLAS_TARGET_AMD64)
-    MlasPlatform.QLinearAddInt8Routine(InputA, ScaleA, ZeroPointA, InputB, ScaleB, ZeroPointB, ScaleC, ZeroPointC, OutputC, N);
+    constexpr int64_t GROUPSIZE=32*1024;
+    int64_t group_count = (static_cast<int64_t>(N) + GROUPSIZE - 1) / GROUPSIZE;
+    #ifdef _OPENMP
+    #pragma omp parallel for
+    #endif
+    for (int64_t i = 0; i < group_count; ++i) {
+        MlasPlatform.QLinearAddInt8Routine(InputA + i * GROUPSIZE, ScaleA, ZeroPointA, 
+                                           InputB + i * GROUPSIZE, ScaleB, ZeroPointB, 
+                                           ScaleC, ZeroPointC, OutputC + i * GROUPSIZE,
+                                           (i == (group_count - 1)) ? (N - GROUPSIZE * (group_count - 1)) : GROUPSIZE);
+    }
 #else
     MlasQuantizeLinearAddKernel<int8_t>(
         InputA, ScaleA, ZeroPointA, InputB, ScaleB, ZeroPointB, ScaleC, ZeroPointC, OutputC, N);
@@ -482,7 +492,17 @@ MlasQuantizeLinearAdd<uint8_t>(
     )
 {
 #if defined(MLAS_TARGET_AMD64)
-    MlasPlatform.QLinearAddUInt8Routine(InputA, ScaleA, ZeroPointA, InputB, ScaleB, ZeroPointB, ScaleC, ZeroPointC, OutputC, N);
+    constexpr int64_t GROUPSIZE=32*1024;
+    int64_t group_count = (static_cast<int64_t>(N) + GROUPSIZE - 1) / GROUPSIZE;
+    #ifdef _OPENMP
+    #pragma omp parallel for
+    #endif
+    for (int64_t i = 0; i < group_count; ++i) {
+        MlasPlatform.QLinearAddUInt8Routine(InputA + i * GROUPSIZE, ScaleA, ZeroPointA, 
+                                            InputB + i * GROUPSIZE, ScaleB, ZeroPointB, 
+                                            ScaleC, ZeroPointC, OutputC + i * GROUPSIZE,
+                                            (i == group_count - 1) ? (N - GROUPSIZE * (group_count - 1)) : GROUPSIZE);
+    }
 #else
     MlasQuantizeLinearAddKernel<uint8_t>(
         InputA, ScaleA, ZeroPointA, InputB, ScaleB, ZeroPointB, ScaleC, ZeroPointC, OutputC, N);
