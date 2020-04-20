@@ -572,7 +572,7 @@ if (WIN32)
     # parallel build
     # These compiler opitions cannot be forwarded to NVCC, so cannot use add_compiler_options
     string(APPEND CMAKE_CXX_FLAGS " /MP /W4")
-    #in order to fix this warning, we need C++17 so that we can use 'if constexpr'
+    #Compiler bug, we should get such warnings. It will be fixed in a new VC release
     string(APPEND CMAKE_CXX_FLAGS " /wd4127")
     # class needs to have dll-interface to be used by clients
     string(APPEND CMAKE_CXX_FLAGS " /wd4251")
