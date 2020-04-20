@@ -208,7 +208,8 @@ void NodeArg::ClearShape() {
   }
 }
 
-common::Status NodeArg::UpdateTypeAndShape(const ONNX_NAMESPACE::TypeProto& input_type, bool strict, const logging::Logger& logger) {
+common::Status NodeArg::UpdateTypeAndShape(const ONNX_NAMESPACE::TypeProto& input_type, bool strict, bool override_types,
+                                           const logging::Logger& logger) {
   if (!utils::HasType(node_arg_info_)) {
     *node_arg_info_.mutable_type() = input_type;
     type_ = DataTypeUtils::ToType(node_arg_info_.type());
@@ -229,10 +230,24 @@ common::Status NodeArg::UpdateTypeAndShape(const ONNX_NAMESPACE::TypeProto& inpu
       const auto& input_tensor_elem_type = input_tensor_type.elem_type();
       const auto& current_tensor_elem_type = current_type.tensor_type().elem_type();
 
-      if (input_tensor_elem_type != current_tensor_elem_type)
-        return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Tensor element type mismatch. ",
-                               static_cast<TensorProto_DataType>(input_tensor_elem_type), " != ",
-                               static_cast<TensorProto_DataType>(current_tensor_elem_type));
+      if (input_tensor_elem_type != current_tensor_elem_type) {
+        if (override_types) {
+          DataType inferred_type = DataTypeUtils::ToType(input_type);
+          // The "SetType" call will override the shape information to empty.
+          // If the original tensor has shape information, need to set it back.
+          if (Shape()) {
+            auto old_shape = *Shape();
+            SetType(inferred_type);
+            SetShape(old_shape);
+          } else {
+            SetType(inferred_type);
+          }
+        } else {
+          return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Tensor element type mismatch. ",
+                                 static_cast<TensorProto_DataType>(input_tensor_elem_type), " != ",
+                                 static_cast<TensorProto_DataType>(current_tensor_elem_type));
+        }
+      }
 
       if (utils::HasShape(input_tensor_type)) {
         auto& current_tensor_type = *current_type.mutable_tensor_type();
@@ -249,11 +264,24 @@ common::Status NodeArg::UpdateTypeAndShape(const ONNX_NAMESPACE::TypeProto& inpu
       const auto& input_tensor_type = input_type.sparse_tensor_type();
       const auto input_tensor_elem_type = input_tensor_type.elem_type();
       const auto current_tensor_elem_type = current_type.sparse_tensor_type().elem_type();
+
       if (input_tensor_elem_type != current_tensor_elem_type) {
-        return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "SparseTensor element type mismatch. ",
-                               static_cast<TensorProto_DataType>(input_tensor_elem_type), " != ",
-                               static_cast<TensorProto_DataType>(current_tensor_elem_type));
+        if (override_types) {
+          DataType inferred_type = DataTypeUtils::ToType(input_type);
+          if (Shape()) {
+            auto old_shape = *Shape();
+            SetType(inferred_type);
+            SetShape(old_shape);
+          } else {
+            SetType(inferred_type);
+          }
+        } else {
+          return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "SparseTensor element type mismatch. ",
+                                 static_cast<TensorProto_DataType>(input_tensor_elem_type), " != ",
+                                 static_cast<TensorProto_DataType>(current_tensor_elem_type));
+        }
       }
+
       if (utils::HasShape(input_tensor_type)) {
         auto& current_tensor_type = *current_type.mutable_sparse_tensor_type();
         if (utils::HasShape(current_tensor_type)) {
@@ -275,11 +303,12 @@ common::Status NodeArg::UpdateTypeAndShape(const ONNX_NAMESPACE::TypeProto& inpu
   return Status::OK();
 }
 
-common::Status NodeArg::UpdateTypeAndShape(const NodeArg& node_arg, bool strict, const logging::Logger& logger) {
+common::Status NodeArg::UpdateTypeAndShape(const NodeArg& node_arg, bool strict, bool override_types,
+                                           const logging::Logger& logger) {
   auto status = Status::OK();
 
   if (utils::HasType(node_arg.node_arg_info_))
-    status = UpdateTypeAndShape(node_arg.node_arg_info_.type(), strict, logger);
+    status = UpdateTypeAndShape(node_arg.node_arg_info_.type(), strict, override_types, logger);
 
   return status;
 }
@@ -720,7 +749,8 @@ Graph::Graph(const Model& owning_model,
       using_latest_onnx_opset_(UsingLatestOnnxOpset(domain_to_version)),
       parent_graph_(parent_graph),
       parent_node_(parent_node),
-      logger_(logger) {
+      logger_(logger),
+      is_loaded_from_model_file_(GraphLoadedFromModelFile(graph_proto_)) {
   ORT_ENFORCE(graph_proto != nullptr, "graph_proto cannot be null");
   ArgNameToTypeMap name_to_type_map;
 
@@ -770,7 +800,7 @@ Graph::Graph(const Model& owning_model,
       // so we prefer the shape from the initializer
       name_to_type_map[tensor.name()] = t;
       if (matching_graph_input != nullptr) {
-        ORT_THROW_IF_ERROR(matching_graph_input->UpdateTypeAndShape(t, true, logger));
+        ORT_THROW_IF_ERROR(matching_graph_input->UpdateTypeAndShape(t, true, false, logger));
       }
     } else {
       // v4 and later allows a constant initializer with no matching graph input. create a NodeArg for these.
@@ -778,6 +808,13 @@ Graph::Graph(const Model& owning_model,
       if (matching_graph_input == nullptr) {
         name_to_type_map[tensor.name()] = t;
         ORT_IGNORE_RETURN_VALUE(GetOrCreateNodeArg(tensor.name(), &t));
+      } else {
+        LOGS(logger_, WARNING) << "Initializer " << tensor.name()
+                               << " appears in graph inputs and will not be treated as constant value/weight. "
+                               << "This may fail some of the graph optimizations, like const folding. "
+                               << "Move it out of graph inputs if there is no need to override it, "
+                               << "by either re-generating the model with latest exporter/converter "
+                               << "or with the tool onnxruntime/tools/python/remove_initializer_from_input.py.";
       }
     }
   }
@@ -800,6 +837,10 @@ Graph::Graph(const Model& owning_model,
   for (const auto& node_proto : graph_proto_->node()) {
     AddNode(node_proto, name_to_type_map);
   }
+
+  if (is_loaded_from_model_file_) {
+    InitializeStateFromModelFileGraphProto();
+  }
 }
 
 Graph::Graph(Graph& parent_graph, const Node& parent_node, ONNX_NAMESPACE::GraphProto& subgraph_proto)
@@ -808,6 +849,85 @@ Graph::Graph(Graph& parent_graph, const Node& parent_node, ONNX_NAMESPACE::Graph
             parent_graph.DomainToVersionMap(), parent_graph.IrVersion(), parent_graph.schema_registry_,
             &parent_graph,
             &parent_node, parent_graph.logger_, std::unordered_map<std::string, const ONNX_NAMESPACE::FunctionProto*>()) {
+}
+
+void Graph::InitializeStateFromModelFileGraphProto() {
+  ORT_ENFORCE(
+      graph_inputs_excluding_initializers_.empty() && graph_inputs_including_initializers_.empty() &&
+          value_info_.empty() && graph_outputs_.empty(),
+      "Graph state to be loaded into must be empty.");
+
+  // Name to NodeArg mapping of all graph initializers.
+  std::unordered_map<std::string, const NodeArg*> graph_initializers;
+
+  // Name to NodeArg mapping of all graph inputs.
+  std::unordered_map<std::string, const NodeArg*> graph_inputs;
+
+  // Name to NodeArg mapping of all graph node outputs.
+  std::unordered_map<std::string, const NodeArg*> nodes_outputs;
+
+  for (auto& initializer : graph_proto_->initializer()) {
+    auto& initializer_name = initializer.name();
+    auto initializer_arg = GetNodeArg(initializer_name);
+    graph_initializers.insert({initializer_name, initializer_arg});
+  }
+
+  // Set graph inputs.
+  // <graph_inputs_including_initializers_> contains inputs exactly specified in proto.
+  // <graph_inputs_excluding_initializers_> contains inputs without default value (specified as initializer).
+  for (auto& graph_input : graph_proto_->input()) {
+    auto& name = graph_input.name();
+    const auto* node_arg = GetNodeArg(name);
+    ORT_ENFORCE(node_arg, "Graph ctor should have created NodeArg for initializer.");
+    graph_inputs.insert({name, node_arg});
+    graph_inputs_including_initializers_.push_back(node_arg);
+    if (graph_initializers.end() == graph_initializers.find(name)) {
+      graph_inputs_excluding_initializers_.push_back(node_arg);
+    }
+  }
+
+  for (const auto& node : Nodes()) {
+    for (const auto* output_def : node.OutputDefs()) {
+      nodes_outputs.insert({output_def->Name(), output_def});
+    }
+  }
+
+  // Set graph outputs.
+  // Graph outputs specified in the model must be nodes' outputs, initializer or graph inputs.
+  for (auto& graph_output : graph_proto_->output()) {
+    auto& graph_output_name = graph_output.name();
+    auto iter = nodes_outputs.find(graph_output_name);
+    if (nodes_outputs.end() == iter) {
+      // Graph output is not found as any node's output.
+      auto iter2 = graph_initializers.find(graph_output_name);
+      if (graph_initializers.end() == iter2) {
+        // Graph output is not found as any initializer.
+        auto iter3 = graph_inputs.find(graph_output_name);
+        if (graph_inputs.end() == iter3) {
+          // Graph output is not found as any graph input.
+          ORT_THROW(
+              "This is an invalid model. Graph output (", graph_output_name,
+              ") does not exist in the graph.");
+        }
+        graph_outputs_.push_back(iter3->second);
+        continue;
+      }
+      graph_outputs_.push_back(iter2->second);
+      continue;
+    }
+    graph_outputs_.push_back(iter->second);
+  }
+
+  // Set graph value_info_.
+  for (const auto& graph_value_info : graph_proto_->value_info()) {
+    const auto& name = graph_value_info.name();
+    const auto* node_arg = GetNodeArg(name);
+    if (node_arg != nullptr) {
+      value_info_.push_back(node_arg);
+    }
+  }
+
+  ComputeOverridableInitializers();
 }
 
 Status Graph::VerifyNoDuplicateName() {
@@ -996,8 +1116,6 @@ Status Graph::BuildConnections(std::unordered_set<std::string>& outer_scope_node
 
   // recurse into subgraphs first so we can update any nodes in this graph that are used by those subgraphs
   if (!resolve_context_.nodes_with_subgraphs.empty()) {
-    const bool loaded_from_model_file = GraphLoadedFromModelFile(graph_proto_);
-
     for (auto* node : resolve_context_.nodes_with_subgraphs) {
       for (auto& subgraph : node->MutableSubgraphs()) {
         std::unordered_set<std::string> node_args_consumed;
@@ -1053,7 +1171,7 @@ Status Graph::BuildConnections(std::unordered_set<std::string>& outer_scope_node
             // If this Graph was built manually, remove the implicit input from the graph outputs if it is present there
             // and not explicitly listed in the ordered graph outputs (as that implies we should leave it as an output).
             // If the Graph was loaded from a GraphProto, honor the explicit graph outputs and leave as is.
-            if (!loaded_from_model_file) {
+            if (!is_loaded_from_model_file_) {
               graph_outputs_.erase(std::remove(graph_outputs_.begin(), graph_outputs_.end(), node_arg),
                                    graph_outputs_.end());
             }
@@ -1318,12 +1436,12 @@ bool FullyDefinedType(const TypeProto& type_proto) {
 // parameters are the Graph instance for the subgraph, the input types from the control flow node that contains
 // the subgraph, and the vector to write the output from the inferencing.
 using SubgraphInferencingFunc =
-    std::function<Status(const Node&, Graph&, const std::vector<const TypeProto*>&, std::vector<const TypeProto*>&)>;
+    std::function<Status(const Node&, Graph&, const std::vector<const TypeProto*>&, std::vector<const TypeProto*>&, const Graph::ResolveOptions&)>;
 
 class GraphInferencerImpl : public ONNX_NAMESPACE::GraphInferencer {
  public:
-  GraphInferencerImpl(const Node& node, Graph& graph, SubgraphInferencingFunc& inferencing_func)
-      : node_(node), graph_(graph), inferencing_func_(inferencing_func) {
+  GraphInferencerImpl(const Node& node, Graph& graph, SubgraphInferencingFunc& inferencing_func, const Graph::ResolveOptions& options)
+      : node_(node), graph_(graph), inferencing_func_(inferencing_func), options_(options) {
   }
 
   // Perform inferencing on the graph contained in GraphInferencer.
@@ -1333,7 +1451,7 @@ class GraphInferencerImpl : public ONNX_NAMESPACE::GraphInferencer {
                                               const std::vector<const TensorProto*>& /*input_data*/) override {
     std::vector<const TypeProto*> output_types;
 
-    auto status = inferencing_func_(node_, graph_, input_types, output_types);
+    auto status = inferencing_func_(node_, graph_, input_types, output_types, options_);
 
     if (status != Status::OK()) {
       fail_type_inference("Graph attribute inferencing failed: ", status.ErrorMessage());
@@ -1346,6 +1464,7 @@ class GraphInferencerImpl : public ONNX_NAMESPACE::GraphInferencer {
   const Node& node_;
   Graph& graph_;
   SubgraphInferencingFunc& inferencing_func_;
+  const Graph::ResolveOptions& options_;
 };
 
 // An implementation of the InferenceContext interface required by operator-specific
@@ -1356,10 +1475,12 @@ class InferenceContextImpl : public ONNX_NAMESPACE::InferenceContext {
  public:
   InferenceContextImpl(Node& node,
                        SubgraphInferencingFunc subgraph_inferencing_func,
-                       const Graph& graph) noexcept
+                       const Graph& graph,
+                       const Graph::ResolveOptions& options) noexcept
       : node_(node),
         subgraph_inferencing_func_(subgraph_inferencing_func),
-        graph_(graph) {
+        graph_(graph),
+        options_(options) {
     node_output_types_.resize(node.OutputDefs().size());
   }
 
@@ -1420,7 +1541,7 @@ class InferenceContextImpl : public ONNX_NAMESPACE::InferenceContext {
     auto* subgraph = node_.GetMutableGraphAttribute(attribute_name);
 
     if (subgraph) {
-      auto inferencer = onnxruntime::make_unique<GraphInferencerImpl>(node_, *subgraph, subgraph_inferencing_func_);
+      auto inferencer = onnxruntime::make_unique<GraphInferencerImpl>(node_, *subgraph, subgraph_inferencing_func_, options_);
       graph_inferencer = inferencer.get();
       graph_inferencers_.push_back(std::move(inferencer));
     } else {
@@ -1438,11 +1559,13 @@ class InferenceContextImpl : public ONNX_NAMESPACE::InferenceContext {
   SubgraphInferencingFunc subgraph_inferencing_func_;
   std::vector<std::unique_ptr<GraphInferencerImpl>> graph_inferencers_;
   const Graph& graph_;
+  const Graph::ResolveOptions& options_;
 };
 
 Status Graph::InferAndVerifySubgraphTypes(const Node& node, Graph& subgraph,
                                           const std::vector<const TypeProto*>& input_types,
-                                          std::vector<const TypeProto*>& output_types) {
+                                          std::vector<const TypeProto*>& output_types,
+                                          const Graph::ResolveOptions& options) {
   auto status = Status::OK();
 
   output_types.clear();
@@ -1475,7 +1598,7 @@ Status Graph::InferAndVerifySubgraphTypes(const Node& node, Graph& subgraph,
     const auto& subgraph_input = *subgraph_inputs->at(i);
 
     NodeArg* mutable_nodearg = subgraph.GetNodeArg(subgraph_input.Name());
-    status = mutable_nodearg->UpdateTypeAndShape(input_type, true, subgraph.logger_);
+    status = mutable_nodearg->UpdateTypeAndShape(input_type, true, options.override_types, subgraph.logger_);
     if (!status.IsOK()) {
       return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Node:", node.Name(), " ", status.ErrorMessage());
     }
@@ -1496,7 +1619,7 @@ Status Graph::InferAndVerifySubgraphTypes(const Node& node, Graph& subgraph,
     if (!subgraph_nodearg)
       continue;
 
-    status = subgraph_nodearg->UpdateTypeAndShape(*implicit_node_arg, true, subgraph.logger_);
+    status = subgraph_nodearg->UpdateTypeAndShape(*implicit_node_arg, true, options.override_types, subgraph.logger_);
     if (!status.IsOK()) {
       return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Node:", node.Name(), " ", status.ErrorMessage());
     }
@@ -1508,8 +1631,6 @@ Status Graph::InferAndVerifySubgraphTypes(const Node& node, Graph& subgraph,
 
   // now that we have handled the input types, do the type/shape inferencing for the subgraph
   // to flow the type/shape info through it
-  // TODO: Handle override-type option correctly for subgraphs.
-  Graph::ResolveOptions options;
   status = subgraph.PerformTypeAndShapeInferencing(options);
   ORT_RETURN_IF_ERROR(status);
 
@@ -1615,7 +1736,7 @@ Status Graph::InferAndVerifyTypeMatch(Node& node, const OpSchema& op, const Reso
   // Once that completes, the outputs from the node containing the subgraph will be updated, and the final values
   // returned here.
   SubgraphInferencingFunc func(Graph::InferAndVerifySubgraphTypes);
-  InferenceContextImpl context(node, func, *this);
+  InferenceContextImpl context(node, func, *this, options);
 
   try {
     context.RunInferencing();
@@ -2081,7 +2202,7 @@ void Graph::AddInitializedTensor(const TensorProto& tensor) {
   *(tensor_added) = tensor;
   name_to_initial_tensor_[tensor.name()] = tensor_added;
 
-  if (!GraphLoadedFromModelFile(graph_proto_) && GetNodeArg(tensor.name()) == nullptr) {
+  if (!is_loaded_from_model_file_ && GetNodeArg(tensor.name()) == nullptr) {
     // make sure there is a NodeArg for the initializer as SetGraphInputsOutputs may add it to the graph inputs.
     // the shape will be set to the correct value in TypeCheckInputsAndInitializers as we don't yet know whether there
     // will be a matching graph input for this initializer (we prefer shape info from the graph input).
@@ -2304,7 +2425,7 @@ Node& Graph::AddNode(const std::string& name,
   const gsl::not_null<Node*> node = AllocateNode();
   node->Init(name, op_type, description, inputs, outputs, attributes, domain);
   if (0 != op_type.compare(kNoOp)) {
-    graph_proto_sync_needed_ = true;
+    GraphProtoSyncNeeded(true);
   }
 
   return *node;
@@ -2483,214 +2604,137 @@ void Graph::CleanUnusedInitializers(const std::unordered_set<std::string>* initi
 
 GSL_SUPPRESS(es .84)  // warning about ignoring return value from insert(...)
 Status Graph::SetGraphInputsOutputs() {
-  // Flag indicates that this graph is loaded from model file.
-  // If it's true, then graph inputs and outputs will keep the same
-  // as what are specified in the model, otherwise, graph inputs
-  // and outputs will be inferred.
-  const bool loaded_from_model_file = GraphLoadedFromModelFile(graph_proto_);
+  // If loaded from a model file, we start from the specified inputs and
+  // outputs set earlier by InitializeStateFromModelFileGraphProto().
+  // Otherwise (!is_loaded_from_model_file_), we need to fix up the inputs and
+  // may also need to infer inputs and outputs.
+  // In either case, calls to SetInputs() or SetOutputs() may affect the actual
+  // inputs and outputs.
+  if (is_loaded_from_model_file_) return Status::OK();
 
-  if (loaded_from_model_file && !graph_inputs_manually_set_ && !graph_outputs_manually_set_) {
-    // Reset graph inputs excluding initializers/value_info.
-    graph_inputs_excluding_initializers_.clear();
-    value_info_.clear();
+  // Reset value_info.
+  value_info_.clear();
 
-    // Reset graph inputs/outputs.
+  std::unordered_map<std::string, size_t> output_name_to_node_arg_index;
+  std::vector<const NodeArg*> output_node_args_in_order;
+
+  // if something is coming from outer scope, consider it already added
+  std::unordered_set<std::string> added_input_names{outer_scope_node_arg_names_};
+  graph_inputs_excluding_initializers_.clear();
+  if (!graph_inputs_manually_set_) {
     graph_inputs_including_initializers_.clear();
+  } else {
+    // If we've set graph_inputs_including_initializers_ by calling SetInputs,
+    // we copy its non-duplicate elements to graph_inputs_excluding_initializers_.
+    // Later, we will erase initializers from graph_inputs_excluding_initializers_
+    // if graph_inputs_manually_set_ is true.
+    // In this way, we can ensure graph_inputs_excluding_initializers_ is the full
+    // set of inputs less initializers, which could be a graph input used only
+    // by a subgraph and thereby only an implicit input to a node, or a graph input
+    // not used anywhere.
+    // We also make sure graph_inputs_excluding_initializers_ list doesn't have any
+    // duplicate names.
+    std::unordered_set<std::string> existing_names;
+    for (auto arg : graph_inputs_including_initializers_) {
+      const std::string& name = arg->Name();
+      if (existing_names.count(name) == 0) {
+        graph_inputs_excluding_initializers_.push_back(arg);
+        existing_names.insert(name);
+      }
+    }
+  }
+
+  if (!graph_outputs_manually_set_) {
     graph_outputs_.clear();
+  }
 
-    // Name to NodeArg mapping of all graph initializers.
-    std::unordered_map<std::string, const NodeArg*> graph_initializers;
-
-    // Name to NodeArg mapping of all graph inputs.
-    std::unordered_map<std::string, const NodeArg*> graph_inputs;
-
-    // Name to NodeArg mapping of all graph node outputs.
-    std::unordered_map<std::string, const NodeArg*> nodes_outputs;
-
-    for (auto& initializer : graph_proto_->initializer()) {
-      auto& initializer_name = initializer.name();
-      auto initializer_arg = GetNodeArg(initializer_name);
-      graph_initializers.insert({initializer_name, initializer_arg});
-    }
-
-    // Set graph inputs.
-    // <graph_inputs_including_initializers_> contains inputs exactly specified in proto.
-    // <graph_inputs_excluding_initializers_> contains inputs without default value (specified as initializer).
-    for (auto& graph_input : graph_proto_->input()) {
-      auto& name = graph_input.name();
-      const auto* node_arg = GetNodeArg(name);
-      ORT_ENFORCE(node_arg, "Graph ctor should have created NodeArg for initializer.");
-      graph_inputs.insert({name, node_arg});
-      graph_inputs_including_initializers_.push_back(node_arg);
-      if (graph_initializers.end() == graph_initializers.find(name)) {
-        graph_inputs_excluding_initializers_.push_back(node_arg);
+  // Collect all nodes' outputs
+  for (const auto& node : Nodes()) {
+    for (const auto* output_def : node.OutputDefs()) {
+      if (output_def->Exists()) {
+        output_node_args_in_order.push_back(output_def);
+        output_name_to_node_arg_index.insert({output_def->Name(), output_node_args_in_order.size() - 1});
       }
     }
+  }
 
-    for (const auto& node : Nodes()) {
-      for (const auto* output_def : node.OutputDefs()) {
-        nodes_outputs.insert({output_def->Name(), output_def});
-      }
-    }
-
-    // Set graph outputs.
-    // Graph outputs specified in the model must be nodes' outputs, initializer or graph inputs.
-    for (auto& graph_output : graph_proto_->output()) {
-      auto& graph_output_name = graph_output.name();
-      auto iter = nodes_outputs.find(graph_output_name);
-      if (nodes_outputs.end() == iter) {
-        // Graph output is not found as any node's output.
-        auto iter2 = graph_initializers.find(graph_output_name);
-        if (graph_initializers.end() == iter2) {
-          // Graph output is not found as any initializer.
-          auto iter3 = graph_inputs.find(graph_output_name);
-          if (graph_inputs.end() == iter3) {
-            // Graph output is not found as any graph input.
-            return Status(ONNXRUNTIME, FAIL,
-                          "This is an invalid model. "
-                          "Graph output (" +
-                              graph_output_name + ") does not exist in the graph.");
-          }
-          graph_outputs_.push_back(iter3->second);
-          continue;
-        }
-        graph_outputs_.push_back(iter2->second);
+  // Init graph output args with copy of all node output args.
+  auto graph_output_args = output_name_to_node_arg_index;
+  for (const auto& node : Nodes()) {
+    // Go thru all node's inputs.
+    for (const auto* input_arg : node.InputDefs()) {
+      if (!input_arg->Exists()) {
+        // It's an optional input and does not exist in this case.
         continue;
       }
-      graph_outputs_.push_back(iter->second);
-    }
 
-    // Set graph value_info_.
-    for (auto& graph_value_info : graph_proto_->value_info()) {
-      auto& name = graph_value_info.name();
-      const auto* node_arg = GetNodeArg(name);
-      value_info_.push_back(node_arg);
-    }
-  } else {
-    // Reset value_info.
-    value_info_.clear();
+      auto output_arg_iter = output_name_to_node_arg_index.find(input_arg->Name());
+      if (output_name_to_node_arg_index.end() == output_arg_iter) {
+        // This input arg is not the output of another node so must come from either a graph input or an initializer.
+        const std::string& name = input_arg->Name();
 
-    std::unordered_map<std::string, size_t> output_name_to_node_arg_index;
-    std::vector<const NodeArg*> output_node_args_in_order;
+        if (added_input_names.end() == added_input_names.find(name)) {
+          // This graph input has not been added into <graph_inputs_>.
+          bool is_initializer = name_to_initial_tensor_.find(name) != name_to_initial_tensor_.end();
 
-    // if something is coming from outer scope, consider it already added
-    std::unordered_set<std::string> added_input_names{outer_scope_node_arg_names_};
-    graph_inputs_excluding_initializers_.clear();
-    if (!graph_inputs_manually_set_) {
-      graph_inputs_including_initializers_.clear();
-    } else {
-      // If we've set graph_inputs_including_initializers_ by calling SetInputs,
-      // we copy its non-duplicate elements to graph_inputs_excluding_initializers_.
-      // Later, we will erase initializers from graph_inputs_excluding_initializers_
-      // if graph_inputs_manually_set_ is true.
-      // In this way, we can ensure graph_inputs_excluding_initializers_ is the full
-      // set of inputs less initializers, which could be a graph input used only
-      // by a subgraph and thereby only an implicit input to a node, or a graph input
-      // not used anywhere.
-      // We also make sure graph_inputs_excluding_initializers_ list doesn't have any
-      // duplicate names.
-      std::unordered_set<std::string> existing_names;
-      for (auto arg : graph_inputs_including_initializers_) {
-        const std::string& name = arg->Name();
-        if (existing_names.count(name) == 0) {
-          graph_inputs_excluding_initializers_.push_back(arg);
-          existing_names.insert(name);
-        }
-      }
-    }
-
-    if (!graph_outputs_manually_set_) {
-      graph_outputs_.clear();
-    }
-
-    // Collect all nodes' outputs
-    for (const auto& node : Nodes()) {
-      for (const auto* output_def : node.OutputDefs()) {
-        if (output_def->Exists()) {
-          output_node_args_in_order.push_back(output_def);
-          output_name_to_node_arg_index.insert({output_def->Name(), output_node_args_in_order.size() - 1});
-        }
-      }
-    }
-
-    // Init graph output args with copy of all node output args.
-    auto graph_output_args = output_name_to_node_arg_index;
-    for (const auto& node : Nodes()) {
-      // Go thru all node's inputs.
-      for (const auto* input_arg : node.InputDefs()) {
-        if (!input_arg->Exists()) {
-          // It's an optional input and does not exist in this case.
-          continue;
-        }
-
-        auto output_arg_iter = output_name_to_node_arg_index.find(input_arg->Name());
-        if (output_name_to_node_arg_index.end() == output_arg_iter) {
-          // This input arg is not the output of another node so must come from either a graph input or an initializer.
-          const std::string& name = input_arg->Name();
-
-          if (added_input_names.end() == added_input_names.find(name)) {
-            // This graph input has not been added into <graph_inputs_>.
-            bool is_initializer = name_to_initial_tensor_.find(name) != name_to_initial_tensor_.end();
-
-            if (!graph_inputs_manually_set_) {
-              // if IR version < 4 all initializers must have a matching graph input
-              // (even though the graph input is not allowed to override the initializer).
-              // if IR version >= 4 initializers are not required to have a matching graph input.
-              // any graph inputs that are to override initializers must be specified by calling SetInputs.
-              if (!is_initializer || ir_version_ < 4) {
-                graph_inputs_including_initializers_.push_back(input_arg);
-              }
-              if (!is_initializer) {
-                // If input_arg is not of an initializer, we add it into graph_inputs_excluding_initializers_.
-                graph_inputs_excluding_initializers_.push_back(input_arg);
+          if (!graph_inputs_manually_set_) {
+            // if IR version < 4 all initializers must have a matching graph input
+            // (even though the graph input is not allowed to override the initializer).
+            // if IR version >= 4 initializers are not required to have a matching graph input.
+            // any graph inputs that are to override initializers must be specified by calling SetInputs.
+            if (!is_initializer || ir_version_ < 4) {
+              graph_inputs_including_initializers_.push_back(input_arg);
+            }
+            if (!is_initializer) {
+              // If input_arg is not of an initializer, we add it into graph_inputs_excluding_initializers_.
+              graph_inputs_excluding_initializers_.push_back(input_arg);
+            }
+          } else {
+            // graph_inputs_including_initializers_ has been manually populated by SetInputs.
+            // Validation: the <input_arg> must be in graph inputs or initializers when it's manually set.
+            if (!is_initializer) {
+              const auto& inputs = graph_inputs_including_initializers_;
+              bool in_inputs = std::find(inputs.begin(), inputs.end(), input_arg) != inputs.end();
+              if (!in_inputs) {
+                return Status(ONNXRUNTIME, FAIL,
+                              name + " must be either specified in graph inputs or graph initializers.");
               }
             } else {
-              // graph_inputs_including_initializers_ has been manually populated by SetInputs.
-              // Validation: the <input_arg> must be in graph inputs or initializers when it's manually set.
-              if (!is_initializer) {
-                const auto& inputs = graph_inputs_including_initializers_;
-                bool in_inputs = std::find(inputs.begin(), inputs.end(), input_arg) != inputs.end();
-                if (!in_inputs) {
-                  return Status(ONNXRUNTIME, FAIL,
-                                name + " must be either specified in graph inputs or graph initializers.");
-                }
-              } else {
-                // If arg_input is of an initializer, we remove it from graph_inputs_excluding_initializers_
-                // whose initial content has both initializers and non-initializers.
-                auto input_pos = std::find(graph_inputs_excluding_initializers_.begin(),
-                                           graph_inputs_excluding_initializers_.end(),
-                                           input_arg);
-                if (input_pos != graph_inputs_excluding_initializers_.end()) {
-                  graph_inputs_excluding_initializers_.erase(input_pos);
-                }
+              // If arg_input is of an initializer, we remove it from graph_inputs_excluding_initializers_
+              // whose initial content has both initializers and non-initializers.
+              auto input_pos = std::find(graph_inputs_excluding_initializers_.begin(),
+                                         graph_inputs_excluding_initializers_.end(),
+                                         input_arg);
+              if (input_pos != graph_inputs_excluding_initializers_.end()) {
+                graph_inputs_excluding_initializers_.erase(input_pos);
               }
             }
+          }
 
-            added_input_names.insert(name);
-          }
-        } else if (graph_output_args.erase(output_arg_iter->first) >= 1) {
-          // Remove the output arg name from graph outputs since it's
-          // the input of this node, which we call it intermediate result
-          // and store it in <m_valueinfo>.
-          if (std::find(value_info_.begin(), value_info_.end(), input_arg) == value_info_.end()) {
-            value_info_.push_back(input_arg);
-          }
+          added_input_names.insert(name);
+        }
+      } else if (graph_output_args.erase(output_arg_iter->first) >= 1) {
+        // Remove the output arg name from graph outputs since it's
+        // the input of this node, which we call it intermediate result
+        // and store it in <m_valueinfo>.
+        if (std::find(value_info_.begin(), value_info_.end(), input_arg) == value_info_.end()) {
+          value_info_.push_back(input_arg);
         }
       }
     }
+  }
 
-    if (!graph_outputs_manually_set_) {
-      // Set graph outputs in order.
-      std::vector<size_t> graph_output_args_index;
-      graph_output_args_index.reserve(graph_output_args.size());
-      for (const auto& output_arg : graph_output_args) {
-        graph_output_args_index.push_back(output_arg.second);
-      }
+  if (!graph_outputs_manually_set_) {
+    // Set graph outputs in order.
+    std::vector<size_t> graph_output_args_index;
+    graph_output_args_index.reserve(graph_output_args.size());
+    for (const auto& output_arg : graph_output_args) {
+      graph_output_args_index.push_back(output_arg.second);
+    }
 
-      std::sort(graph_output_args_index.begin(), graph_output_args_index.end());
-      for (auto& output_arg_index : graph_output_args_index) {
-        graph_outputs_.push_back(output_node_args_in_order[output_arg_index]);
-      }
+    std::sort(graph_output_args_index.begin(), graph_output_args_index.end());
+    for (auto& output_arg_index : graph_output_args_index) {
+      graph_outputs_.push_back(output_node_args_in_order[output_arg_index]);
     }
   }
 
@@ -2731,7 +2775,7 @@ gsl::not_null<Node*> Graph::AllocateNode() {
 
   nodes_.push_back(std::move(new_node));
   ++num_of_nodes_;
-  graph_resolve_needed_ = true;
+  GraphResolveNeeded(true);
 
   return gsl::not_null<Node*>{node};
 }
@@ -2746,8 +2790,8 @@ bool Graph::ReleaseNode(NodeIndex index) {
   if (nodes_[index] != nullptr) {
     nodes_[index] = nullptr;
     --num_of_nodes_;
-    graph_proto_sync_needed_ = true;
-    graph_resolve_needed_ = true;
+    GraphProtoSyncNeeded(true);
+    GraphResolveNeeded(true);
   }
 
   return true;
@@ -2835,7 +2879,7 @@ Status Graph::InlineFunction(Node& node) {
       *(tensor->mutable_name()) = subgraph_node.OutputDefs()[0]->Name();
       name_to_initial_tensor_[tensor->name()] = tensor;
     } else {
-      std::vector<NodeArg *> inputs, outputs;
+      std::vector<NodeArg*> inputs, outputs;
       for (auto* input : subgraph_node.InputDefs()) {
         auto it = remap_input_output.find(input->Name());
         if (it != remap_input_output.end())
@@ -2862,13 +2906,35 @@ Status Graph::InlineFunction(Node& node) {
 }
 
 void Graph::SetInputs(const std::vector<const NodeArg*>& inputs) {
-  graph_inputs_including_initializers_ = inputs;
+  if (is_loaded_from_model_file_) {
+    // graph loaded from model file
+    graph_inputs_including_initializers_ = inputs;
+    graph_inputs_excluding_initializers_.clear();
+    for (const auto* input : inputs) {
+      ORT_ENFORCE(input->Exists(), "Input to set must exist.");
+      if (name_to_initial_tensor_.find(input->Name()) == name_to_initial_tensor_.end()) {
+        graph_inputs_excluding_initializers_.emplace_back(input);
+      }
+    }
+
+    ComputeOverridableInitializers();
+  } else {
+    // creating graph from scratch
+    // rely on SetGraphInputsOutputs() to fix up graph_inputs_excluding_initializers_
+    graph_inputs_including_initializers_ = inputs;
+  }
+
   graph_inputs_manually_set_ = true;
+  GraphProtoSyncNeeded(true);
+  GraphResolveNeeded(true);
 }
 
 void Graph::SetOutputs(const std::vector<const NodeArg*>& outputs) {
   graph_outputs_ = outputs;
+
   graph_outputs_manually_set_ = true;
+  GraphProtoSyncNeeded(true);
+  GraphResolveNeeded(true);
 }
 
 void Graph::AddFunction(const ONNX_NAMESPACE::FunctionProto* func_proto) {
@@ -2877,7 +2943,7 @@ void Graph::AddFunction(const ONNX_NAMESPACE::FunctionProto* func_proto) {
 
 void Graph::SetNodeArgType(NodeArg& arg, const onnx::TypeProto& type_proto) {
   arg.SetType(type_proto);
-  graph_resolve_needed_ = true;
+  GraphResolveNeeded(true);
 }
 
 Graph::~Graph() {

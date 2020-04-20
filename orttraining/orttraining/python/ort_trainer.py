@@ -9,6 +9,8 @@ import torch.onnx
 import onnxruntime as ort
 from distutils.version import LooseVersion
 
+DEFAULT_OPSET_VERSION = 10
+
 class IODescription():
     def __init__(self, name, shape, dtype=None, num_classes=None):
         self.name_ = name
@@ -47,9 +49,9 @@ def generate_sample(desc, device=None):
     # symbolic dimensions are described with strings. set symbolic dimensions to be 1
     size = [s if isinstance(s, (int)) else 1 for s in desc.shape_]
     if desc.num_classes_:
-        return torch.randint(0, desc.num_classes_, size, dtype=desc.dtype_, device=device)
+        return torch.randint(0, desc.num_classes_, size, dtype=desc.dtype_).to(device)
     else:
-        return torch.randn(size, dtype=desc.dtype_, device=device)
+        return torch.randn(size, dtype=desc.dtype_).to(device)
 
 def get_device_index(device):
     if type(device) == str:
@@ -125,7 +127,7 @@ def FuseSofmaxNLLToSoftmaxCE(onnx_model):
         nll_loss_node = None
         nll_loss_node_index = 0
         for nll_loss_node_index, node in enumerate(onnx_model.graph.node):
-            if node.op_type == "nll_loss":
+            if node.op_type == "nll_loss" or node.op_type == "NegativeLogLikelihoodLoss":
                 nll_loss_node = node
                 break
 
@@ -253,7 +255,7 @@ def wrap_for_input_match(model, input_names):
     model = WrapModel(model, input_names)
     return model
 
-def convert_model_loss_fn_to_onnx(model, loss_fn, model_desc, device, inputs):
+def convert_model_loss_fn_to_onnx(model, loss_fn, model_desc, device, inputs, opset_version=DEFAULT_OPSET_VERSION):
     # example: {input0:{0:'batch'}, input1:{0:'batch'}}
     dynamic_axes = {}
     for input in model_desc.inputs_:
@@ -284,6 +286,9 @@ def convert_model_loss_fn_to_onnx(model, loss_fn, model_desc, device, inputs):
     else:
         raise RuntimeError("Unexpected input type. Only torch.Tensor, or dict/list/tuple of torch.Tensor is supported.")
 
+    if loss_fn:
+        model = model_loss_cls(model, loss_fn)
+
     # pytorch onnx exporter/trace does not try to match argument names.
     # e.g. for models with optional inputs, it requires all inputs be present.
     # this is a problem because the model graph depends on inputs provided.
@@ -300,9 +305,6 @@ def convert_model_loss_fn_to_onnx(model, loss_fn, model_desc, device, inputs):
 
     f = io.BytesIO()
 
-    if loss_fn:
-        model = model_loss_cls(model, loss_fn)
-
     # Other export options to use(this is for backward compatibility).
     other_export_options = {}
     # This option was added after 1.4 release.
@@ -312,7 +314,7 @@ def convert_model_loss_fn_to_onnx(model, loss_fn, model_desc, device, inputs):
     torch.onnx._export(model, tuple(sample_inputs), f,
                        input_names=input_names,
                        output_names=output_names,
-                       opset_version=10,
+                       opset_version=opset_version,
                        dynamic_axes=dynamic_axes,
                        training=True,
                        _retain_param_name=True,
@@ -387,8 +389,7 @@ def create_ort_training_session_with_optimizer(model, device, training_optimizer
                                                use_mixed_precision=False, allreduce_post_accumulation=False,
                                                partition_optimizer=False,
                                                enable_grad_norm_clip=True,
-                                               seed=None,
-                                               frozen_weights=[]):
+                                               frozen_weights=[], opset_version=DEFAULT_OPSET_VERSION):
     output_name = model.graph.output[0].name
     ort_parameters = ort.TrainingParameters()
     ort_parameters.loss_output_name = output_name
@@ -399,8 +400,6 @@ def create_ort_training_session_with_optimizer(model, device, training_optimizer
     ort_parameters.use_mixed_precision = use_mixed_precision
     ort_parameters.allreduce_post_accumulation = allreduce_post_accumulation
     ort_parameters.partition_optimizer = partition_optimizer
-    if seed is not None:
-        ort_parameters.seed = seed
     ort_parameters.enable_grad_norm_clip = enable_grad_norm_clip
 
     output_types = {}
@@ -521,8 +520,7 @@ class ORTTrainer():
                  learning_rate_description, device, gradient_accumulation_steps=1, postprocess_model=None,
                  world_rank=0, world_size=1, use_mixed_precision=False, allreduce_post_accumulation=False,
                  global_step=0, get_lr_this_step=None, loss_scaler=None, partition_optimizer=False,
-                 seed=None,
-                 enable_grad_norm_clip=True, frozen_weights=[]):
+                 enable_grad_norm_clip=True, frozen_weights=[], _opset_version=DEFAULT_OPSET_VERSION):
         super(ORTTrainer, self).__init__()
         """
         Initializes ORTTrainer.
@@ -552,7 +550,6 @@ class ORTTrainer():
             use_mixed_precision:
             allreduce_post_accumulation:
             partition_optimizer: Whether to partition the optimizer state. (default=False)
-            seed: allow user code to set backend static random seed.
         """
         self.is_train = True
 
@@ -599,8 +596,8 @@ class ORTTrainer():
         self.partition_optimizer_ = partition_optimizer
         self.enable_grad_norm_clip_ = enable_grad_norm_clip
         self.frozen_weights_ = frozen_weights
+        self.opset_version_ = _opset_version
         self.loss_scale_input_name = ''
-        self.seed_ = seed
 
         self._init_session()
 
@@ -616,10 +613,9 @@ class ORTTrainer():
                 self.world_rank, self.world_size,
                 self.gradient_accumulation_steps, bind_parameters=False,
                 use_mixed_precision=self.use_mixed_precision, allreduce_post_accumulation=self.allreduce_post_accumulation_,
-                partition_optimizer=self.partition_optimizer_, 
+                partition_optimizer=self.partition_optimizer_,
                 enable_grad_norm_clip=self.enable_grad_norm_clip_,
-                seed=self.seed_,
-                frozen_weights=self.frozen_weights_)
+                frozen_weights=self.frozen_weights_, opset_version=self.opset_version_)
 
         self.loss_scale_input_name = self.session.loss_scale_input_name
 
@@ -630,7 +626,7 @@ class ORTTrainer():
 
         # ORT backend has modified model output dtype from float32 to float16.
         for o_desc in self.model_desc_.outputs_:
-            if self.use_mixed_precision and o_desc.dtype_ == torch.float32:
+            if self.use_mixed_precision and o_desc.dtype_ == torch.float32 and not self.session.is_output_fp32_node(o_desc.name_):
                 o_desc.eval_dtype_ = torch.float16
             else:
                 o_desc.eval_dtype_ = o_desc.dtype_
@@ -654,7 +650,8 @@ class ORTTrainer():
             return
 
         if self.torch_model_ is not None:
-            self.onnx_model_ = convert_model_loss_fn_to_onnx(self.torch_model_, self.loss_fn_, self.model_desc_, torch.device('cpu'), inputs)
+            self.onnx_model_ = convert_model_loss_fn_to_onnx(
+                self.torch_model_, self.loss_fn_, self.model_desc_, torch.device('cpu'), inputs, opset_version=self.opset_version_)
 
             if self.post_process_model_fn_:
                 self.post_process_model_fn_(self.onnx_model_)
@@ -893,7 +890,7 @@ class ORTTrainer():
 
 class ORTModel():
     def __init__(self, model, loss_fn, model_desc, device, postprocess_model=None, world_rank=-1, world_size=1,
-                 gradient_accumulation_steps=1):
+                 gradient_accumulation_steps=1, _opset_version=DEFAULT_OPSET_VERSION):
         super(ORTModel, self).__init__()
         self.model_ = model
         self.loss_fn_ = loss_fn
@@ -902,8 +899,10 @@ class ORTModel():
         self.world_rank = world_rank
         self.world_size = world_size
         self.gradient_accumulation_steps = gradient_accumulation_steps
+        self.opset_version = _opset_version
 
-        model = convert_model_loss_fn_to_onnx(self.model_, self.loss_fn_, self.model_desc_, torch.device('cpu'))
+        model = convert_model_loss_fn_to_onnx(self.model_, self.loss_fn_, self.model_desc_, torch.device(
+            'cpu'), opset_version=self.opset_version)
         if postprocess_model:
             postprocess_model(model)
 

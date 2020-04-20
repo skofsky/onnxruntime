@@ -14,7 +14,7 @@ o) BUILD_OS=${OPTARG};;
 #cpu, gpu, tensorrt
 d) BUILD_DEVICE=${OPTARG};;
 r) BUILD_DIR=${OPTARG};;
-#python version: 3.6 3.7 (absence means default 3.5)
+#python version: 3.6 3.7 (absence means default 3.6)
 p) PYTHON_VER=${OPTARG};;
 # "--build_wheel --use_openblas"
 x) BUILD_EXTR_PAR=${OPTARG};;
