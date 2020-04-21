@@ -42,6 +42,7 @@ template <typename T>
 Status QLinearAdd<T>::Compute(OpKernelContext* context) const {
   const int32_t qmax = std::numeric_limits<T>::max();
   const int32_t qmin = ((-128 == (int)std::numeric_limits<T>::min()) ? -127 : (int)std::numeric_limits<T>::min());
+  auto thread_pool = context->GetOperatorThreadPool();
   return QLinearBroadcastTwo<T>(
       *context,
       [](EigenVectorMap<T> output, T input0, ConstEigenVectorMap<T> input1, float A_scale, float B_scale, float C_scale, int A_zero_point, int B_zero_point, int C_zero_point) {
@@ -54,13 +55,13 @@ Status QLinearAdd<T>::Compute(OpKernelContext* context) const {
         output = (((((input0.array().template cast<float>() - static_cast<float>(A_zero_point)) * A_scale) + b_value) / C_scale).round().template cast<int>() + C_zero_point)
                   .max(qmin).min(qmax).template cast<T>();
       },
-      [](EigenVectorMap<T> output, ConstEigenVectorMap<T> input0, ConstEigenVectorMap<T> input1, float A_scale, float B_scale, float C_scale, int A_zero_point, int B_zero_point, int C_zero_point) {
+      [thread_pool](EigenVectorMap<T> output, ConstEigenVectorMap<T> input0, ConstEigenVectorMap<T> input1, float A_scale, float B_scale, float C_scale, int A_zero_point, int B_zero_point, int C_zero_point) {
         // output = (((((input0.array().template cast<float>() - static_cast<float>(A_zero_point)) * A_scale) +
         //             ((input1.array().template cast<float>() - static_cast<float>(B_zero_point)) * B_scale)) / C_scale).round().template cast<int>() + C_zero_point)
         //           .max(qmin).min(qmax).template cast<T>();
         MlasQuantizeLinearAdd(input0.data(), A_scale, (T)A_zero_point,
                               input1.data(), B_scale, (T)B_zero_point,
-                              C_scale, (T)C_zero_point, output.data(), output.outerStride());
+                              C_scale, (T)C_zero_point, output.data(), output.outerStride(), thread_pool);
       });
 }
 

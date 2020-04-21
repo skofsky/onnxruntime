@@ -118,8 +118,8 @@ Return Value:
     this->LogisticKernelRoutine = MlasLogisticKernel;
     this->TanhKernelRoutine = MlasTanhKernel;
     this->ErfKernelRoutine = MlasErfKernel;
-    this->QLinearAddInt8Routine = nullptr;
-    this->QLinearAddUInt8Routine = nullptr;
+    this->QLinearAddInt8Routine = MlasQuantizeLinearAddKernel_S8;
+    this->QLinearAddUInt8Routine = MlasQuantizeLinearAddKernel_U8;
 
     this->NchwcBlockSize = 8;
     this->PreferredBufferAlignment = MLAS_DEFAULT_PREFERRED_BUFFER_ALIGNMENT;

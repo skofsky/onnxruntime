@@ -17,8 +17,8 @@ Abstract:
         Output = Saturate(RoundToEven(Input / Scale) + ZeroPoint)
 
 --*/
-#include <iostream>
 #include "mlasi.h"
+#include <cmath>
 
 #if defined(MLAS_NEON64_INTRINSICS) || defined(MLAS_SSE2_INTRINSICS)
 
@@ -255,6 +255,7 @@ MlasQuantizeLinearUnpackBytes<int8_t>(
 
 template<typename DataType>
 void
+MLASCALL
 MlasQuantizeLinearAddKernel(
     const DataType* InputA,
     float ScaleA,
@@ -341,34 +342,6 @@ MlasQuantizeLinearKernel(
 }
 
 
-template<typename DataType>
-void
-MlasQuantizeLinearAddKernel(
-    const DataType* InputA,
-    float ScaleA,
-    DataType ZeroPointA,
-    const DataType* InputB,
-    float ScaleB,
-    DataType ZeroPointB,
-    float ScaleC,
-    DataType ZeroPointC,
-    DataType* OutputC,
-    size_t N
-    )
-{
-    constexpr int32_t MinimumValue = std::numeric_limits<DataType>::min();
-    constexpr int32_t MaximumValue = std::numeric_limits<DataType>::max();
-
-    for (size_t n = 0; n < N; n++) {
-        float ValueA = (float(InputA[n]) - float(ZeroPointA)) * ScaleA;
-        float ValueB = (float(InputB[n]) - float(ZeroPointB)) * ScaleB;
-        int32_t IntValueC = (int32_t)std::nearbyintf((ValueA + ValueB) / ScaleC) + int32_t(ZeroPointC);
-        IntValueC = std::max(IntValueC, MinimumValue);
-        IntValueC = std::min(IntValueC, MaximumValue);
-        Output[n] = (DataType)IntValueC;
-    }
-}
-
 template<typename OutputType>
 void
 MLASCALL
@@ -416,6 +389,37 @@ Return Value:
     }
 }
 
+
+template<typename DataType>
+void
+MLASCALL
+MlasQuantizeLinearAddKernel(
+    const DataType* InputA,
+    float ScaleA,
+    DataType ZeroPointA,
+    const DataType* InputB,
+    float ScaleB,
+    DataType ZeroPointB,
+    float ScaleC,
+    DataType ZeroPointC,
+    DataType* OutputC,
+    size_t N
+    )
+{
+    constexpr int32_t MinimumValue = std::numeric_limits<DataType>::min();
+    constexpr int32_t MaximumValue = std::numeric_limits<DataType>::max();
+
+    for (size_t n = 0; n < N; n++) {
+        float ValueA = ScaleA * (int(InputA[n]) - int(ZeroPointA));
+        float ValueB = ScaleB * (int(InputB[n]) - int(ZeroPointB));
+        int32_t IntValueC = (int32_t)std::nearbyintf((ValueA + ValueB) / ScaleC) + int32_t(ZeroPointC);
+        IntValueC = std::max(IntValueC, MinimumValue);
+        IntValueC = std::min(IntValueC, MaximumValue);
+        OutputC[n] = (DataType)IntValueC;
+    }
+}
+
+
 #endif
 
 template
@@ -428,6 +432,7 @@ MlasQuantizeLinear<int8_t>(
     float Scale,
     int8_t ZeroPoint
     );
+
 
 template
 void
@@ -454,25 +459,56 @@ MlasQuantizeLinearAdd<int8_t>(
     float ScaleC,
     int8_t ZeroPointC,
     int8_t* OutputC,
-    size_t N
+    size_t N,
+    MLAS_THREADPOOL* ThreadPool
     )
 {
-#if defined(MLAS_TARGET_AMD64)
     constexpr int64_t GROUPSIZE=32*1024;
+
+#ifdef MLAS_NO_ONNXRUNTIME_THREADPOOL
+    MLAS_UNREFERENCED_PARAMETER(ThreadPool);
+    //
+    // Execute the pooling kernel routine.
+    //
+
+#if !defined(_OPENMP)
+    int64_t group_count = 1;
+#else
     int64_t group_count = (static_cast<int64_t>(N) + GROUPSIZE - 1) / GROUPSIZE;
-    #ifdef _OPENMP
     #pragma omp parallel for
-    #endif
+#endif
     for (int64_t i = 0; i < group_count; ++i) {
-        MlasPlatform.QLinearAddInt8Routine(InputA + i * GROUPSIZE, ScaleA, ZeroPointA, 
-                                           InputB + i * GROUPSIZE, ScaleB, ZeroPointB, 
-                                           ScaleC, ZeroPointC, OutputC + i * GROUPSIZE,
-                                           (i == (group_count - 1)) ? (N - GROUPSIZE * (group_count - 1)) : GROUPSIZE);
+
+#if defined(MLAS_TARGET_AMD64)
+            MlasPlatform.QLinearAddInt8Routine(
+#else
+            MlasQuantizeLinearAddKernel<int8_t>(
+#endif
+                InputA + i * GROUPSIZE, ScaleA, ZeroPointA,
+                InputB + i * GROUPSIZE, ScaleB, ZeroPointB,
+                ScaleC, ZeroPointC, OutputC + i * GROUPSIZE,
+                (i == group_count - 1) ? (N - GROUPSIZE * (group_count - 1)) : GROUPSIZE);
     }
 #else
-    MlasQuantizeLinearAddKernel<int8_t>(
-        InputA, ScaleA, ZeroPointA, InputB, ScaleB, ZeroPointB, ScaleC, ZeroPointC, OutputC, N);
+    //
+    // Use an external thread pool if one is provided.
+    // TODO: change to use MlasExecuteThreaded
+    int64_t group_count = (static_cast<int64_t>(N) + GROUPSIZE - 1) / GROUPSIZE;
+    onnxruntime::concurrency::ThreadPool::TryBatchParallelFor(
+        ThreadPool, static_cast<ptrdiff_t>(group_count), [&](ptrdiff_t i) {
+#if defined(MLAS_TARGET_AMD64)
+            MlasPlatform.QLinearAddInt8Routine(
+#else
+            MlasQuantizeLinearAddKernel<int8_t>(
 #endif
+                InputA + i * GROUPSIZE, ScaleA, ZeroPointA,
+                InputB + i * GROUPSIZE, ScaleB, ZeroPointB,
+                ScaleC, ZeroPointC, OutputC + i * GROUPSIZE,
+                (i == group_count - 1) ? (N - GROUPSIZE * (group_count - 1)) : GROUPSIZE);
+        }, 0);
+    return;
+#endif
+
 }
 
 template<>
@@ -488,24 +524,53 @@ MlasQuantizeLinearAdd<uint8_t>(
     float ScaleC,
     uint8_t ZeroPointC,
     uint8_t* OutputC,
-    size_t N
+    size_t N,
+    MLAS_THREADPOOL* ThreadPool
     )
 {
-#if defined(MLAS_TARGET_AMD64)
     constexpr int64_t GROUPSIZE=32*1024;
+
+#ifdef MLAS_NO_ONNXRUNTIME_THREADPOOL
+    MLAS_UNREFERENCED_PARAMETER(ThreadPool);
+    //
+    // Execute the pooling kernel routine.
+    //
+
+#if !defined(_OPENMP)
+    int64_t group_count = 1;
+#else
     int64_t group_count = (static_cast<int64_t>(N) + GROUPSIZE - 1) / GROUPSIZE;
-    #ifdef _OPENMP
     #pragma omp parallel for
-    #endif
+#endif
     for (int64_t i = 0; i < group_count; ++i) {
-        MlasPlatform.QLinearAddUInt8Routine(InputA + i * GROUPSIZE, ScaleA, ZeroPointA, 
-                                            InputB + i * GROUPSIZE, ScaleB, ZeroPointB, 
-                                            ScaleC, ZeroPointC, OutputC + i * GROUPSIZE,
-                                            (i == group_count - 1) ? (N - GROUPSIZE * (group_count - 1)) : GROUPSIZE);
+#if defined(MLAS_TARGET_AMD64)
+        MlasPlatform.QLinearAddUInt8Routine(
+#else
+        MlasQuantizeLinearAddKernel<uint8_t>(
+#endif
+            InputA + i * GROUPSIZE, ScaleA, ZeroPointA,
+            InputB + i * GROUPSIZE, ScaleB, ZeroPointB,
+            ScaleC, ZeroPointC, OutputC + i * GROUPSIZE,
+            (i == group_count - 1) ? (N - GROUPSIZE * (group_count - 1)) : GROUPSIZE);
     }
 #else
-    MlasQuantizeLinearAddKernel<uint8_t>(
-        InputA, ScaleA, ZeroPointA, InputB, ScaleB, ZeroPointB, ScaleC, ZeroPointC, OutputC, N);
+    //
+    // Use an external thread pool if one is provided.
+    // TODO: change to use MlasExecuteThreaded
+    int64_t group_count = (static_cast<int64_t>(N) + GROUPSIZE - 1) / GROUPSIZE;
+    onnxruntime::concurrency::ThreadPool::TryBatchParallelFor(
+        ThreadPool, static_cast<ptrdiff_t>(group_count), [&](ptrdiff_t i) {
+#if defined(MLAS_TARGET_AMD64)
+            MlasPlatform.QLinearAddUInt8Routine(
+#else
+            MlasQuantizeLinearAddKernel<uint8_t>(
+#endif
+                InputA + i * GROUPSIZE, ScaleA, ZeroPointA,
+                InputB + i * GROUPSIZE, ScaleB, ZeroPointB,
+                ScaleC, ZeroPointC, OutputC + i * GROUPSIZE,
+                (i == group_count - 1) ? (N - GROUPSIZE * (group_count - 1)) : GROUPSIZE);
+        }, 0);
+    return;
 #endif
 }
 
@@ -641,6 +706,50 @@ Return Value:
             n -= 1;
         }
     }
+}
+
+void
+MLASCALL
+MlasQuantizeLinearAddKernel_S8(
+    const int8_t* InputA,
+    float ScaleA,
+    int8_t ZeroPointA,
+    const int8_t* InputB,
+    float ScaleB,
+    int8_t ZeroPointB,
+    float ScaleC,
+    int8_t ZeroPointC,
+    int8_t* OutputC,
+    size_t N
+    )
+{
+    MlasQuantizeLinearAddKernel<int8_t>(
+        InputA, ScaleA, ZeroPointA,
+        InputB, ScaleB, ZeroPointB,
+        ScaleC, ZeroPointC, OutputC, N
+    );
+}
+
+void
+MLASCALL
+MlasQuantizeLinearAddKernel_U8(
+    const uint8_t* InputA,
+    float ScaleA,
+    uint8_t ZeroPointA,
+    const uint8_t* InputB,
+    float ScaleB,
+    uint8_t ZeroPointB,
+    float ScaleC,
+    uint8_t ZeroPointC,
+    uint8_t* OutputC,
+    size_t N
+    )
+{
+    MlasQuantizeLinearAddKernel<uint8_t>(
+        InputA, ScaleA, ZeroPointA,
+        InputB, ScaleB, ZeroPointB,
+        ScaleC, ZeroPointC, OutputC, N
+    );
 }
 
 #endif

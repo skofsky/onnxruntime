@@ -456,6 +456,7 @@ MlasQuantizeLinearAdd(
     float ScaleC,
     DataType ZeroPointC,
     DataType* OutputC,
-    size_t N
+    size_t N,
+    MLAS_THREADPOOL* ThreadPool
     );
 
