@@ -1,11 +1,11 @@
 jobs:
 - job: 'build'
-  pool: 'Win-GPU-2019'
+  pool: 'edch-test-win-gpu-2019'
   strategy:
     maxParallel: 2
     matrix:
-      debug:
-        BuildConfig: 'Debug'
+      # debug:
+      #   BuildConfig: 'Debug'
       release:
         BuildConfig: 'RelWithDebInfo'
   variables:
