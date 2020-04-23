@@ -18,11 +18,12 @@ class ExecutionFrame;
 class OpKernelContextInternal : public OpKernelContext {
  public:
   explicit OpKernelContextInternal(const SessionState& session_state,
+                                   concurrency::ThreadPool* thread_pool,
                                    IExecutionFrame& frame,
                                    const OpKernel& kernel,
                                    const logging::Logger& logger,
                                    const bool& terminate_flag)
-      : OpKernelContext(&frame, &kernel, session_state.GetThreadPool(), logger),
+      : OpKernelContext(&frame, &kernel, thread_pool, logger),
         session_state_(session_state),
         terminate_flag_(terminate_flag) {
     const auto& implicit_inputs = kernel.Node().ImplicitInputDefs();
