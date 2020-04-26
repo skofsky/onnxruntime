@@ -114,7 +114,9 @@ ThreadPoolManager::ThreadPoolManager() {
 
   // This is a terrible hack
   for (int i = 0; i < physical_cores / ThreadsPoolSize; ++i) {
-    m_threadPools.emplace_back(concurrency::CreateThreadPool(&Env::Default(), {}, concurrency::ThreadPoolType::INTER_OP, nullptr));
+    OrtThreadPoolParams params;
+    params.thread_pool_size = 2;
+    m_threadPools.emplace_back(concurrency::CreateThreadPool(&Env::Default(), params, concurrency::ThreadPoolType::INTRA_OP, nullptr));
     m_freePools.push_back(true);
   }  
 }
