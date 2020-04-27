@@ -89,6 +89,16 @@ inline std::basic_string<T> GetCurrentTimeString() {
   return std::basic_string<T>(time_str);
 }
 
+int GetEnvrionmentVarOrDefault(const std::string& value, int defaultValue) {
+  auto stringVal = Env::Default().GetEnvironmentVar(value);
+
+  if (stringVal.empty()) {
+    return defaultValue;
+  }
+
+  return std::atoi(stringVal.c_str());
+}
+
 // A pool of thread pools
 class ThreadPoolManager {
  public:
@@ -103,19 +113,55 @@ class ThreadPoolManager {
   std::vector<std::unique_ptr<onnxruntime::concurrency::ThreadPool>> m_threadPools;
   std::vector<bool> m_freePools;
   std::mutex m_freePoolsLock;
-  static const int ThreadsPoolSize = 2;
+  static const int DefaultThreadsPoolSize = 2;
 };
 
 ThreadPoolManager::ThreadPoolManager() {
 
-  int physical_cores = std::thread::hardware_concurrency() / 2;
-  //int threads_allocated = 0;
 
+  auto totalWorkers = GetEnvrionmentVarOrDefault("ONNX_TOTAL_THREAD_POOL_WORKERS", std::thread::hardware_concurrency() / 2);
+  auto threadPoolSize = GetEnvrionmentVarOrDefault("ONNX_THREAD_POOL_SIZE", DefaultThreadsPoolSize);
+  auto enableAffinity = GetEnvrionmentVarOrDefault("ONNX_ENABLE_THREAD_POOL_AFFINITY", 0);
+
+  std::cout << "ONNX_TOTAL_THREAD_POOL_WORKERS = " << totalWorkers << std::endl;
+  std::cout << "ONNX_THREAD_POOL_SIZE = " << threadPoolSize << std::endl;
+  std::cout << "ONNX_ENABLE_THREAD_POOL_AFFINITY = " << enableAffinity << std::endl;
+
+  std::vector<size_t> lowerAffinity;
+  std::vector<size_t> upperAffinity;
+
+  if (enableAffinity != 0) {
+    size_t lowerAffinityValue = 0;
+    size_t upperAffinityValue = 0;
+    for (size_t i = 0; i < std::thread::hardware_concurrency() / 2; i += 2) {
+      lowerAffinityValue |= 1ULL << i;
+    }
+    for (size_t i = std::thread::hardware_concurrency() / 2; i < std::thread::hardware_concurrency(); i += 2) {
+      upperAffinityValue |= 1ULL << i;
+    }
+
+    for (int i = 0; i < threadPoolSize; ++i) {
+      lowerAffinity.push_back(lowerAffinityValue);
+      upperAffinity.push_back(upperAffinityValue);
+    }
+  }
 
   // This is a terrible hack
-  for (int i = 0; i < physical_cores / ThreadsPoolSize; ++i) {
+  for (int i = 0; i < totalWorkers; i += threadPoolSize) {
     OrtThreadPoolParams params;
-    params.thread_pool_size = 2;
+    params.thread_pool_size = threadPoolSize;
+    params.allow_spinning = false;
+
+    if (enableAffinity != 0) {
+      if (i < totalWorkers / 2) {
+        params.affinity_vec = lowerAffinity.data();
+        params.affinity_vec_len = lowerAffinity.size();
+      } else {
+        params.affinity_vec = upperAffinity.data();
+        params.affinity_vec_len = upperAffinity.size();
+      }
+    }
+
     m_threadPools.emplace_back(concurrency::CreateThreadPool(&Env::Default(), params, concurrency::ThreadPoolType::INTRA_OP, nullptr));
     m_freePools.push_back(true);
   }  
