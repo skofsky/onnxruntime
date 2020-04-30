@@ -117,7 +117,7 @@ class ThreadPoolManager {
 };
 
 ThreadPoolManager::ThreadPoolManager() {
-
+  std::lock_guard<std::mutex> lock(m_freePoolsLock);
 
   auto totalWorkers = GetEnvrionmentVarOrDefault("ONNX_TOTAL_THREAD_POOL_WORKERS", std::thread::hardware_concurrency() / 2);
   auto threadPoolSize = GetEnvrionmentVarOrDefault("ONNX_THREAD_POOL_SIZE", DefaultThreadsPoolSize);
@@ -164,7 +164,7 @@ ThreadPoolManager::ThreadPoolManager() {
 
     m_threadPools.emplace_back(concurrency::CreateThreadPool(&Env::Default(), params, concurrency::ThreadPoolType::INTRA_OP, nullptr));
     m_freePools.push_back(true);
-  }  
+  }
 }
 
 ThreadPoolManager::~ThreadPoolManager() {
@@ -246,7 +246,7 @@ class ThreadPoolLock {
   onnxruntime::concurrency::ThreadPool* m_threadPool;
 };
 
-static ThreadPoolManager threadPoolManager;
+static std::unique_ptr<ThreadPoolManager> threadPoolManager;
 
 
 }  // namespace
@@ -330,6 +330,10 @@ void InferenceSession::ConstructorCommon(const SessionOptions& session_options,
   // Update the number of steps for the graph transformer manager using the "finalized" session options
   ORT_ENFORCE(graph_transformation_mgr_.SetSteps(session_options_.max_num_graph_transformation_steps).IsOK());
   use_per_session_threads_ = session_options.use_per_session_threads;
+
+  if (threadPoolManager == nullptr) {
+    threadPoolManager = std::make_unique<ThreadPoolManager>();
+  }
 
   if (true) {
     ////LOGS(*session_logger_, INFO) << "Creating and using per session threadpools since use_per_session_threads_ is true";
@@ -857,7 +861,7 @@ common::Status InferenceSession::TransformGraph(onnxruntime::Graph& graph,
 /// Create SessionState instance for each subgraph as we need that for the GraphPartitioner
 /// This will be initialized by InitializeSubgraphSessions.
 common::Status InferenceSession::CreateSubgraphSessionState(Graph& graph, SessionState& session_state) {
-  ThreadPoolLock lock(threadPoolManager);
+  ThreadPoolLock lock(*threadPoolManager);
   for (auto& node : graph.Nodes()) {
     for (auto& entry : node.GetAttributeNameToMutableSubgraphMap()) {
       auto& name = entry.first;
@@ -1304,7 +1308,7 @@ Status InferenceSession::Run(const RunOptions& run_options, const std::vector<st
 
     {
 
-      ThreadPoolLock lock(threadPoolManager);
+      ThreadPoolLock lock(*threadPoolManager);
 
       // execute the graph
       ORT_CHECK_AND_SET_RETVAL(utils::ExecuteGraph(*session_state_, lock.GetThreadPool(), feeds_fetches_manager, feeds, *p_fetches,
