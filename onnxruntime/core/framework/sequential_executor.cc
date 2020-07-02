@@ -121,7 +121,7 @@ static Status ReleaseNodeMLValues(ExecutionFrame& frame,
                                   const SequentialExecutionPlan::NodeExecutionPlan& node_exec_plan,
                                   const logging::Logger& logger);
 
-Status SequentialExecutor::Execute(const SessionState& session_state, const std::vector<int>& feed_mlvalue_idxs,
+Status SequentialExecutor::Execute(const SessionState& session_state, concurrency::ThreadPool* thread_pool, const std::vector<int>& feed_mlvalue_idxs,
                                    const std::vector<OrtValue>& feeds, const std::vector<int>& fetch_mlvalue_idxs,
                                    std::vector<OrtValue>& fetches,
                                    const std::unordered_map<size_t, CustomAllocator>& fetch_allocators,
@@ -225,7 +225,7 @@ Status SequentialExecutor::Execute(const SessionState& session_state, const std:
 #endif
     // construct OpKernelContext
     // TODO: log kernel inputs?
-    OpKernelContextInternal op_kernel_context(session_state, frame, *p_op_kernel, logger, terminate_flag_);
+    OpKernelContextInternal op_kernel_context(session_state, thread_pool, frame, *p_op_kernel, logger, terminate_flag_);
     // TODO: log kernel outputs?
     if (is_profiler_enabled) {
       sync_time_begin = session_state.Profiler().StartTime();

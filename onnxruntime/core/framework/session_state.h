@@ -252,8 +252,8 @@ class SessionState {
   // If the node isn't going to be executed by the CPU provider we don't need it.
   void RemoveSubgraphSessionState(onnxruntime::NodeIndex index);
 
-  concurrency::ThreadPool* GetThreadPool() const noexcept { return thread_pool_; }
-  concurrency::ThreadPool* GetInterOpThreadPool() const noexcept { return inter_op_thread_pool_; }
+  //concurrency::ThreadPool* GetThreadPool() const { return thread_pool_; }
+  concurrency::ThreadPool* GetInterOpThreadPool() const { return inter_op_thread_pool_; }
 
   bool ExportDll() const noexcept { return export_fused_dll_; }
   void SetExportDllFlag(bool flag) noexcept { export_fused_dll_ = flag; }

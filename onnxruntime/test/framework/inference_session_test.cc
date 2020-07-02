@@ -2215,129 +2215,129 @@ class InferenceSessionTestGlobalThreadPools : public InferenceSession {
   const SessionState& GetSessionState() { return InferenceSession::GetSessionState(); }
 };
 
-// Test 1: env created WITHOUT global tp / use per session tp (default case): in this case per session tps should be in use
-TEST(InferenceSessionTests, CheckIfPerSessionThreadPoolsAreBeingUsed) {
-  SessionOptions so;
-  so.use_per_session_threads = true;
-
-  so.session_logid = "CheckIfPerSessionThreadPoolsAreBeingUsed";
-  auto logging_manager = onnxruntime::make_unique<logging::LoggingManager>(
-      std::unique_ptr<ISink>(new CLogSink()), logging::Severity::kVERBOSE, false,
-      LoggingManager::InstanceType::Temporal);
-
-  std::unique_ptr<Environment> env;
-  auto st = Environment::Create(std::move(logging_manager), env);
-  ASSERT_TRUE(st.IsOK());
-
-  InferenceSessionTestGlobalThreadPools session_object{so, *env.get()};
-  ASSERT_STATUS_OK(session_object.Load(MODEL_URI));
-  ASSERT_STATUS_OK(session_object.Initialize());
-
-  // make sure we're using the per session threadpools
-  auto intra_tp_from_session = session_object.GetIntraOpThreadPoolToUse();
-  auto intra_tp_from_session_state = session_object.GetSessionState().GetThreadPool();
-  auto inter_tp_from_session = session_object.GetInterOpThreadPoolToUse();
-  auto inter_tp_from_session_state = session_object.GetSessionState().GetInterOpThreadPool();
-  auto intra_tp_from_env = env->GetIntraOpThreadPool();
-  auto inter_tp_from_env = env->GetInterOpThreadPool();
-
-  // ensure threadpools were set correctly in the session state
-  ASSERT_TRUE(intra_tp_from_session == intra_tp_from_session_state);
-  ASSERT_TRUE(inter_tp_from_session == inter_tp_from_session_state);
-
-  ASSERT_TRUE(intra_tp_from_env == nullptr);
-  ASSERT_TRUE(inter_tp_from_env == nullptr);
-
-  RunOptions run_options;
-  run_options.run_tag = "RunTag";
-  run_options.run_log_severity_level = static_cast<int>(Severity::kVERBOSE);
-  RunModel(session_object, run_options);
-}
+//// Test 1: env created WITHOUT global tp / use per session tp (default case): in this case per session tps should be in use
+//TEST(InferenceSessionTests, CheckIfPerSessionThreadPoolsAreBeingUsed) {
+//  SessionOptions so;
+//  so.use_per_session_threads = true;
+//
+//  so.session_logid = "CheckIfPerSessionThreadPoolsAreBeingUsed";
+//  auto logging_manager = onnxruntime::make_unique<logging::LoggingManager>(
+//      std::unique_ptr<ISink>(new CLogSink()), logging::Severity::kVERBOSE, false,
+//      LoggingManager::InstanceType::Temporal);
+//
+//  std::unique_ptr<Environment> env;
+//  auto st = Environment::Create(std::move(logging_manager), env);
+//  ASSERT_TRUE(st.IsOK());
+//
+//  InferenceSessionTestGlobalThreadPools session_object{so, *env.get()};
+//  ASSERT_STATUS_OK(session_object.Load(MODEL_URI));
+//  ASSERT_STATUS_OK(session_object.Initialize());
+//
+//  // make sure we're using the per session threadpools
+//  auto intra_tp_from_session = session_object.GetIntraOpThreadPoolToUse();
+//  auto intra_tp_from_session_state = session_object.GetSessionState().GetThreadPool();
+//  auto inter_tp_from_session = session_object.GetInterOpThreadPoolToUse();
+//  auto inter_tp_from_session_state = session_object.GetSessionState().GetInterOpThreadPool();
+//  auto intra_tp_from_env = env->GetIntraOpThreadPool();
+//  auto inter_tp_from_env = env->GetInterOpThreadPool();
+//
+//  // ensure threadpools were set correctly in the session state
+//  ASSERT_TRUE(intra_tp_from_session == intra_tp_from_session_state);
+//  ASSERT_TRUE(inter_tp_from_session == inter_tp_from_session_state);
+//
+//  ASSERT_TRUE(intra_tp_from_env == nullptr);
+//  ASSERT_TRUE(inter_tp_from_env == nullptr);
+//
+//  RunOptions run_options;
+//  run_options.run_tag = "RunTag";
+//  run_options.run_log_severity_level = static_cast<int>(Severity::kVERBOSE);
+//  RunModel(session_object, run_options);
+//}
 
 // Test 2: env created with global tp / DONT use per session tp: in this case global tps should be in use
-TEST(InferenceSessionTests, CheckIfGlobalThreadPoolsAreBeingUsed) {
-  SessionOptions so;
-  so.use_per_session_threads = false;
+//TEST(InferenceSessionTests, CheckIfGlobalThreadPoolsAreBeingUsed) {
+//  SessionOptions so;
+//  so.use_per_session_threads = false;
+//
+//  so.session_logid = "CheckIfGlobalThreadPoolsAreBeingUsed";
+//  auto logging_manager = onnxruntime::make_unique<logging::LoggingManager>(
+//      std::unique_ptr<ISink>(new CLogSink()), logging::Severity::kVERBOSE, false,
+//      LoggingManager::InstanceType::Temporal);
+//
+//  std::unique_ptr<Environment> env;
+//  OrtThreadingOptions tp_options;
+//  auto st = Environment::Create(std::move(logging_manager), env, &tp_options, true /*create_global_thread_pools*/);
+//  ASSERT_TRUE(st.IsOK());
+//
+//  InferenceSessionTestGlobalThreadPools session_object{so, *env.get()};
+//  ASSERT_STATUS_OK(session_object.Load(MODEL_URI));
+//  ASSERT_STATUS_OK(session_object.Initialize());
+//
+//  // make sure we're using the global threadpools in both session and session state
+//  auto intra_tp_from_session = session_object.GetIntraOpThreadPoolToUse();
+//  auto intra_tp_from_session_state = session_object.GetSessionState().GetThreadPool();
+//  auto inter_tp_from_session = session_object.GetInterOpThreadPoolToUse();
+//  auto inter_tp_from_session_state = session_object.GetSessionState().GetInterOpThreadPool();
+//  auto intra_tp_from_env = env->GetIntraOpThreadPool();
+//  auto inter_tp_from_env = env->GetInterOpThreadPool();
+//
+//  ASSERT_TRUE(intra_tp_from_session == intra_tp_from_env);
+//  ASSERT_TRUE(inter_tp_from_session == inter_tp_from_env);
+//  ASSERT_TRUE(intra_tp_from_session_state == intra_tp_from_env);
+//  ASSERT_TRUE(inter_tp_from_session_state == inter_tp_from_env);
+//
+//  RunOptions run_options;
+//  run_options.run_tag = "RunTag";
+//  run_options.run_log_severity_level = static_cast<int>(Severity::kVERBOSE);
+//  RunModel(session_object, run_options);
+//}
 
-  so.session_logid = "CheckIfGlobalThreadPoolsAreBeingUsed";
-  auto logging_manager = onnxruntime::make_unique<logging::LoggingManager>(
-      std::unique_ptr<ISink>(new CLogSink()), logging::Severity::kVERBOSE, false,
-      LoggingManager::InstanceType::Temporal);
-
-  std::unique_ptr<Environment> env;
-  OrtThreadingOptions tp_options;
-  auto st = Environment::Create(std::move(logging_manager), env, &tp_options, true /*create_global_thread_pools*/);
-  ASSERT_TRUE(st.IsOK());
-
-  InferenceSessionTestGlobalThreadPools session_object{so, *env.get()};
-  ASSERT_STATUS_OK(session_object.Load(MODEL_URI));
-  ASSERT_STATUS_OK(session_object.Initialize());
-
-  // make sure we're using the global threadpools in both session and session state
-  auto intra_tp_from_session = session_object.GetIntraOpThreadPoolToUse();
-  auto intra_tp_from_session_state = session_object.GetSessionState().GetThreadPool();
-  auto inter_tp_from_session = session_object.GetInterOpThreadPoolToUse();
-  auto inter_tp_from_session_state = session_object.GetSessionState().GetInterOpThreadPool();
-  auto intra_tp_from_env = env->GetIntraOpThreadPool();
-  auto inter_tp_from_env = env->GetInterOpThreadPool();
-
-  ASSERT_TRUE(intra_tp_from_session == intra_tp_from_env);
-  ASSERT_TRUE(inter_tp_from_session == inter_tp_from_env);
-  ASSERT_TRUE(intra_tp_from_session_state == intra_tp_from_env);
-  ASSERT_TRUE(inter_tp_from_session_state == inter_tp_from_env);
-
-  RunOptions run_options;
-  run_options.run_tag = "RunTag";
-  run_options.run_log_severity_level = static_cast<int>(Severity::kVERBOSE);
-  RunModel(session_object, run_options);
-}
-
-// Test 3: env created with global tp / use per session tp: in this case per session tps should be in use
-TEST(InferenceSessionTests, CheckIfPerSessionThreadPoolsAreBeingUsed2) {
-  SessionOptions so;
-  so.use_per_session_threads = true;
-
-  so.session_logid = "CheckIfPerSessionThreadPoolsAreBeingUsed2";
-  auto logging_manager = onnxruntime::make_unique<logging::LoggingManager>(
-      std::unique_ptr<ISink>(new CLogSink()), logging::Severity::kVERBOSE, false,
-      LoggingManager::InstanceType::Temporal);
-
-  std::unique_ptr<Environment> env;
-  OrtThreadingOptions tp_options;
-  auto st = Environment::Create(std::move(logging_manager), env, &tp_options, true /*create_global_thread_pools*/);
-  ASSERT_TRUE(st.IsOK());
-
-  InferenceSessionTestGlobalThreadPools session_object{so, *env.get()};
-  ASSERT_STATUS_OK(session_object.Load(MODEL_URI));
-  ASSERT_STATUS_OK(session_object.Initialize());
-
-  // make sure we're using the per session threadpools
-  auto intra_tp_from_session = session_object.GetIntraOpThreadPoolToUse();
-  auto intra_tp_from_session_state = session_object.GetSessionState().GetThreadPool();
-  auto inter_tp_from_session = session_object.GetInterOpThreadPoolToUse();
-  auto inter_tp_from_session_state = session_object.GetSessionState().GetInterOpThreadPool();
-  auto intra_tp_from_env = env->GetIntraOpThreadPool();
-  auto inter_tp_from_env = env->GetInterOpThreadPool();
-
-  // ensure threadpools were set correctly in the session state
-  ASSERT_TRUE(intra_tp_from_session == intra_tp_from_session_state);
-  ASSERT_TRUE(inter_tp_from_session == inter_tp_from_session_state);
-
-  // ensure per session thread pools in use are different from the
-  // env threadpools
-  if (intra_tp_from_session && intra_tp_from_env) {  // both tps could be null on 1 core machines
-    ASSERT_FALSE(intra_tp_from_session == intra_tp_from_env);
-  }
-
-  if (inter_tp_from_session && inter_tp_from_env) {  // both tps could be null on 1 core machines
-    ASSERT_FALSE(inter_tp_from_session == inter_tp_from_env);
-  }
-
-  RunOptions run_options;
-  run_options.run_tag = "RunTag";
-  run_options.run_log_severity_level = static_cast<int>(Severity::kVERBOSE);
-  RunModel(session_object, run_options);
-}
+//// Test 3: env created with global tp / use per session tp: in this case per session tps should be in use
+//TEST(InferenceSessionTests, CheckIfPerSessionThreadPoolsAreBeingUsed2) {
+//  SessionOptions so;
+//  so.use_per_session_threads = true;
+//
+//  so.session_logid = "CheckIfPerSessionThreadPoolsAreBeingUsed2";
+//  auto logging_manager = onnxruntime::make_unique<logging::LoggingManager>(
+//      std::unique_ptr<ISink>(new CLogSink()), logging::Severity::kVERBOSE, false,
+//      LoggingManager::InstanceType::Temporal);
+//
+//  std::unique_ptr<Environment> env;
+//  OrtThreadingOptions tp_options;
+//  auto st = Environment::Create(std::move(logging_manager), env, &tp_options, true /*create_global_thread_pools*/);
+//  ASSERT_TRUE(st.IsOK());
+//
+//  InferenceSessionTestGlobalThreadPools session_object{so, *env.get()};
+//  ASSERT_STATUS_OK(session_object.Load(MODEL_URI));
+//  ASSERT_STATUS_OK(session_object.Initialize());
+//
+//  // make sure we're using the per session threadpools
+//  auto intra_tp_from_session = session_object.GetIntraOpThreadPoolToUse();
+//  auto intra_tp_from_session_state = session_object.GetSessionState().GetThreadPool();
+//  auto inter_tp_from_session = session_object.GetInterOpThreadPoolToUse();
+//  auto inter_tp_from_session_state = session_object.GetSessionState().GetInterOpThreadPool();
+//  auto intra_tp_from_env = env->GetIntraOpThreadPool();
+//  auto inter_tp_from_env = env->GetInterOpThreadPool();
+//
+//  // ensure threadpools were set correctly in the session state
+//  ASSERT_TRUE(intra_tp_from_session == intra_tp_from_session_state);
+//  ASSERT_TRUE(inter_tp_from_session == inter_tp_from_session_state);
+//
+//  // ensure per session thread pools in use are different from the
+//  // env threadpools
+//  if (intra_tp_from_session && intra_tp_from_env) {  // both tps could be null on 1 core machines
+//    ASSERT_FALSE(intra_tp_from_session == intra_tp_from_env);
+//  }
+//
+//  if (inter_tp_from_session && inter_tp_from_env) {  // both tps could be null on 1 core machines
+//    ASSERT_FALSE(inter_tp_from_session == inter_tp_from_env);
+//  }
+//
+//  RunOptions run_options;
+//  run_options.run_tag = "RunTag";
+//  run_options.run_log_severity_level = static_cast<int>(Severity::kVERBOSE);
+//  RunModel(session_object, run_options);
+//}
 
 // Test 4: env created WITHOUT global tp / DONT use per session tp --> this should throw an exception
 TEST(InferenceSessionTests, InvalidSessionEnvCombination) {

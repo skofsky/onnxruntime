@@ -60,14 +60,14 @@ void FinalizeFeedFetchCopyInfo(FeedsFetchesManager& feeds_fetches_manager,
                                const std::vector<const OrtMemoryInfo*>& fetch_alloc_info);
 
 // Execute the main graph. The feed_fetches_manager will be finalized based on the provided feeds and fetches.
-common::Status ExecuteGraph(const SessionState& session_state, FeedsFetchesManager& feeds_fetches_manager,
+common::Status ExecuteGraph(const SessionState& session_state, onnxruntime::concurrency::ThreadPool* thread_pool, FeedsFetchesManager& feeds_fetches_manager,
                             const std::vector<OrtValue>& feeds, std::vector<OrtValue>& fetches,
                             ExecutionMode execution_mode, const bool& terminate_flag, const logging::Logger& logger,
                             bool only_execute_path_to_fetches = false);
 
 // Execute a subgraph. The feeds_fetches_manager should have been finalized prior to calling this function.
 // See IControlFlowNode::SetupSubgraphExecutionInfo usage in the control flow kernels.
-common::Status ExecuteSubgraph(const SessionState& session_state, const FeedsFetchesManager& feeds_fetches_manager,
+common::Status ExecuteSubgraph(const SessionState& session_state, onnxruntime::concurrency::ThreadPool* thread_pool, const FeedsFetchesManager& feeds_fetches_manager,
                                const std::vector<OrtValue>& feeds, std::vector<OrtValue>& fetches,
                                const std::unordered_map<size_t, IExecutor::CustomAllocator>& fetch_allocators,
                                ExecutionMode execution_mode, const bool& terminate_flag, const logging::Logger& logger);

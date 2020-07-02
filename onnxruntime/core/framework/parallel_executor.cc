@@ -27,7 +27,7 @@ ParallelExecutor::ParallelExecutor(const SessionState& session_state, const bool
   }
 }
 
-Status ParallelExecutor::Execute(const SessionState& session_state, const std::vector<int>& feed_mlvalue_idxs,
+Status ParallelExecutor::Execute(const SessionState& session_state, concurrency::ThreadPool* thread_pool, const std::vector<int>& feed_mlvalue_idxs,
                                  const std::vector<OrtValue>& feeds, const std::vector<int>& fetch_mlvalue_idxs,
                                  std::vector<OrtValue>& fetches,
                                  const std::unordered_map<size_t, CustomAllocator>& fetch_allocators,
@@ -47,7 +47,7 @@ Status ParallelExecutor::Execute(const SessionState& session_state, const std::v
       continue;
 
     //std::cout << "\t" << p_op_kernel->Node().Name() << std::endl;
-    EnqueueNode(node_index, session_state, logger);
+    EnqueueNode(node_index, session_state, thread_pool, logger);
   }
 
   // Wait for finish.
@@ -109,6 +109,7 @@ Status ParallelExecutor::Execute(const SessionState& session_state, const std::v
 
 Status ParallelExecutor::RunNodeAsync(size_t p_node_index,
                                       const SessionState& session_state,
+                                      concurrency::ThreadPool* thread_pool,
                                       const logging::Logger& logger) {
   LOGS(logger, INFO) << "Begin execution";
 
@@ -139,7 +140,7 @@ Status ParallelExecutor::RunNodeAsync(size_t p_node_index,
       ORT_THROW("Got nullptr from GetKernel for node: ", node.Name());
     }
 
-    OpKernelContextInternal op_kernel_context(session_state, *root_frame_, *p_op_kernel, logger, terminate_flag_);
+    OpKernelContextInternal op_kernel_context(session_state, thread_pool, *root_frame_, *p_op_kernel, logger, terminate_flag_);
 
     if (f_profiler_enabled) {
       sync_time_begin = session_state.Profiler().StartTime();
@@ -261,7 +262,7 @@ Status ParallelExecutor::RunNodeAsync(size_t p_node_index,
             node_index = idx;
             keep_running = true;
           } else {
-            EnqueueNode(idx, session_state, logger);
+            EnqueueNode(idx, session_state, thread_pool, logger);
           }
         }
 
@@ -275,7 +276,7 @@ Status ParallelExecutor::RunNodeAsync(size_t p_node_index,
   return status;
 }
 
-void ParallelExecutor::EnqueueNode(size_t p_node_index, const SessionState& session_state, const logging::Logger& logger) {
+void ParallelExecutor::EnqueueNode(size_t p_node_index, const SessionState& session_state, concurrency::ThreadPool* thread_pool, const logging::Logger& logger) {
   {
     std::unique_lock<OrtMutex> lock(complete_mutex_);
     // if there are errors there's no point queuing more work
@@ -285,7 +286,7 @@ void ParallelExecutor::EnqueueNode(size_t p_node_index, const SessionState& sess
     out_standings_++;
   }
 
-  executor_pool_->Schedule([this, p_node_index, &session_state, &logger]() {
+  executor_pool_->Schedule([this, p_node_index, &session_state, thread_pool, &logger]() {
     auto create_exception_message = [p_node_index, &session_state](const std::exception* ex) {
       const auto* node = session_state.GetGraphViewer().GetNode(p_node_index);
 
@@ -296,7 +297,7 @@ void ParallelExecutor::EnqueueNode(size_t p_node_index, const SessionState& sess
 
     Status status;
     try {
-      status = ParallelExecutor::RunNodeAsync(p_node_index, std::cref(session_state), std::cref(logger));
+      status = ParallelExecutor::RunNodeAsync(p_node_index, std::cref(session_state), thread_pool, std::cref(logger));
     } catch (const std::exception& ex) {
       status = create_exception_message(&ex);
     } catch (...) {

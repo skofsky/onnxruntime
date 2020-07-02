@@ -10,6 +10,7 @@
 #include <list>
 #include <string>
 #include <thread>
+#include <mutex>
 
 #include "core/common/logging/logging.h"
 #include "core/platform/threadpool.h"
@@ -87,6 +88,118 @@ inline std::basic_string<T> GetCurrentTimeString() {
   OrtStrftime<T>(time_str, sizeof(time_str), GetDateFormatString<T>(), &local_tm);
   return std::basic_string<T>(time_str);
 }
+
+// A pool of thread pools
+class ThreadPoolManager {
+ public:
+  ThreadPoolManager();
+  ~ThreadPoolManager();
+
+  onnxruntime::concurrency::ThreadPool* LockThreadPool();
+  void ReleaseThreadPool(onnxruntime::concurrency::ThreadPool* threadPool);
+
+ private:
+
+  std::vector<std::unique_ptr<onnxruntime::concurrency::ThreadPool>> m_threadPools;
+  std::vector<bool> m_freePools;
+  std::mutex m_freePoolsLock;
+  static const int ThreadsPoolSize = 2;
+};
+
+ThreadPoolManager::ThreadPoolManager() {
+
+  int physical_cores = std::thread::hardware_concurrency() / 2;
+  //int threads_allocated = 0;
+
+
+  // This is a terrible hack
+  for (int i = 0; i < physical_cores / ThreadsPoolSize; ++i) {
+    m_threadPools.emplace_back(concurrency::CreateThreadPool(&Env::Default(), {}, concurrency::ThreadPoolType::INTER_OP, nullptr));
+    m_freePools.push_back(true);
+  }  
+}
+
+ThreadPoolManager::~ThreadPoolManager() {
+  int lockedCount = 0;
+
+  //
+  // we need to wait for all thread pools to be freed in order to return
+  //
+  // note that there's a potential issue where threads could be stuck in
+  // LockThreadPool infinitely, so it is up to the caller to only call this
+  // method only when LockThreadPool will never be called again
+  //
+
+  for (;;) {
+    {
+      std::lock_guard<std::mutex> lock(m_freePoolsLock);
+
+      for (int i = 0; i < m_threadPools.size(); ++i) {
+        if (m_freePools[i]) {
+          m_freePools[i] = false;
+          ++lockedCount;
+        }
+      }
+    }
+
+    // return if we've locked all the pools
+    if (lockedCount == m_threadPools.size()) {
+      return;
+    }
+
+    // wait for pools to be released
+    Sleep(0);
+  }
+}
+
+onnxruntime::concurrency::ThreadPool* ThreadPoolManager::LockThreadPool() {
+  for (;;) {
+    std::lock_guard<std::mutex> lock(m_freePoolsLock);
+
+    for (int i = 0; i < m_threadPools.size(); ++i) {
+      if (m_freePools[i]) {
+        m_freePools[i] = false;
+        return m_threadPools[i].get();
+      }
+    }
+    
+    // we weren't able to find a free pool, there's nothing we can do but wait
+    Sleep(0);
+  }
+}
+
+void ThreadPoolManager::ReleaseThreadPool(onnxruntime::concurrency::ThreadPool* threadPool) {
+  std::lock_guard<std::mutex> lock(m_freePoolsLock);
+
+  for (int i = 0; i < m_threadPools.size(); ++i) {
+    if (m_threadPools[i].get() == threadPool) {
+      m_freePools[i] = true;
+    }
+  }
+}
+
+class ThreadPoolLock {
+ public:
+  ThreadPoolLock(ThreadPoolManager& manager)
+      : m_manager(manager) {
+    m_threadPool = m_manager.LockThreadPool();
+  }
+
+  ~ThreadPoolLock() {
+    m_manager.ReleaseThreadPool(m_threadPool);
+  }
+
+  onnxruntime::concurrency::ThreadPool* GetThreadPool() {
+    return m_threadPool;
+  }
+
+ private:
+  ThreadPoolManager& m_manager;
+  onnxruntime::concurrency::ThreadPool* m_threadPool;
+};
+
+static ThreadPoolManager threadPoolManager;
+
 
 }  // namespace
 
@@ -170,36 +283,36 @@ void InferenceSession::ConstructorCommon(const SessionOptions& session_options,
   ORT_ENFORCE(graph_transformation_mgr_.SetSteps(session_options_.max_num_graph_transformation_steps).IsOK());
   use_per_session_threads_ = session_options.use_per_session_threads;
 
-  if (use_per_session_threads_) {
-    LOGS(*session_logger_, INFO) << "Creating and using per session threadpools since use_per_session_threads_ is true";
-    {
-      OrtThreadPoolParams to = session_options_.intra_op_param;
-      if (to.name == nullptr) {
-        to.name = ORT_TSTR("intra-op");
-      }
-      // If the thread pool can use all the processors, then
-      // we set affinity of each thread to each processor.
-      to.auto_set_affinity = to.thread_pool_size == 0 &&
-                             session_options_.execution_mode == ExecutionMode::ORT_SEQUENTIAL &&
-                             to.affinity_vec_len == 0;
-      thread_pool_ =
-          concurrency::CreateThreadPool(&Env::Default(), to, concurrency::ThreadPoolType::INTRA_OP);
-    }
-    if (session_options_.execution_mode == ExecutionMode::ORT_PARALLEL) {
-      OrtThreadPoolParams to = session_options_.inter_op_param;
-      // If the thread pool can use all the processors, then
-      // we set thread affinity.
-      to.auto_set_affinity =
-          to.thread_pool_size == 0 && session_options_.execution_mode == ExecutionMode::ORT_SEQUENTIAL;
-      if (to.name == nullptr)
-        to.name = ORT_TSTR("intra-op");
-      inter_op_thread_pool_ =
-          concurrency::CreateThreadPool(&Env::Default(), to, concurrency::ThreadPoolType::INTER_OP);
-      if (inter_op_thread_pool_ == nullptr) {
-        LOGS(*session_logger_, INFO) << "Failed to create the inter-op thread pool for the parallel executor, setting ExecutionMode to SEQUENTIAL";
-        session_options_.execution_mode = ExecutionMode::ORT_SEQUENTIAL;
-      }
-    }
+  if (true) {
+    ////LOGS(*session_logger_, INFO) << "Creating and using per session threadpools since use_per_session_threads_ is true";
+    ////{
+    ////  OrtThreadPoolParams to = session_options_.intra_op_param;
+    ////  if (to.name == nullptr) {
+    ////    to.name = ORT_TSTR("intra-op");
+    ////  }
+    ////  // If the thread pool can use all the processors, then
+    ////  // we set affinity of each thread to each processor.
+    ////  to.auto_set_affinity = to.thread_pool_size == 0 &&
+    ////                         session_options_.execution_mode == ExecutionMode::ORT_SEQUENTIAL &&
+    ////                         to.affinity_vec_len == 0;
+    ////  thread_pool_ =
+    ////      concurrency::CreateThreadPool(&Env::Default(), to, concurrency::ThreadPoolType::INTRA_OP, nullptr);
+    ////}
+    ////if (session_options_.execution_mode == ExecutionMode::ORT_PARALLEL) {
+    ////  OrtThreadPoolParams to = session_options_.inter_op_param;
+    ////  // If the thread pool can use all the processors, then
+    ////  // we set thread affinity.
+    ////  to.auto_set_affinity =
+    ////      to.thread_pool_size == 0 && session_options_.execution_mode == ExecutionMode::ORT_SEQUENTIAL;
+    ////  if (to.name == nullptr)
+    ////    to.name = ORT_TSTR("intra-op");
+    ////  inter_op_thread_pool_ =
+    ////      concurrency::CreateThreadPool(&Env::Default(), to, concurrency::ThreadPoolType::INTER_OP, nullptr);
+    ////  if (inter_op_thread_pool_ == nullptr) {
+    ////    LOGS(*session_logger_, INFO) << "Failed to create the inter-op thread pool for the parallel executor, setting ExecutionMode to SEQUENTIAL";
+    ////    session_options_.execution_mode = ExecutionMode::ORT_SEQUENTIAL;
+    ////  }
+    ////}
   } else {
     LOGS(*session_logger_, INFO) << "Using global/env threadpools since use_per_session_threads_ is false";
     intra_op_thread_pool_from_env_ = session_env.GetIntraOpThreadPool();
@@ -708,6 +821,7 @@ common::Status InferenceSession::TransformGraph(onnxruntime::Graph& graph,
 /// Create SessionState instance for each subgraph as we need that for the GraphPartitioner
 /// This will be initialized by InitializeSubgraphSessions.
 common::Status InferenceSession::CreateSubgraphSessionState(Graph& graph, SessionState& session_state) {
+  ThreadPoolLock lock(threadPoolManager);
   for (auto& node : graph.Nodes()) {
     for (auto& entry : node.GetAttributeNameToMutableSubgraphMap()) {
       auto& name = entry.first;
@@ -718,7 +832,7 @@ common::Status InferenceSession::CreateSubgraphSessionState(Graph& graph, Sessio
           *subgraph,
           execution_providers_,
           session_state.GetEnableMemoryPattern(),
-          session_state.GetThreadPool(),
+          lock.GetThreadPool(),
           session_state.GetInterOpThreadPool(),
           session_state.GetDataTransferMgr(),
           *session_logger_,
@@ -1203,7 +1317,7 @@ Status InferenceSession::Run(const RunOptions& run_options, const std::vector<st
       session_state_->UpdateToBeExecutedNodes(feeds_fetches_manager.GetFeedsFetchesInfo().fetches_mlvalue_idxs);
     }
     // execute the graph
-    ORT_CHECK_AND_SET_RETVAL(utils::ExecuteGraph(*session_state_, feeds_fetches_manager, feeds, *p_fetches,
+    ORT_CHECK_AND_SET_RETVAL(utils::ExecuteGraph(*session_state_, lock.GetThreadPool(). feeds_fetches_manager, feeds, *p_fetches,
                                                  session_options_.execution_mode, run_options.terminate, run_logger,
                                                  run_options.only_execute_path_to_fetches));
 

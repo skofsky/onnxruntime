@@ -22,7 +22,7 @@ class ParallelExecutor : public IExecutor {
  public:
   ParallelExecutor(const SessionState& session_state, const bool& terminate_flag = false);
 
-  common::Status Execute(const SessionState& session_state, const std::vector<int>& feed_mlvalue_idxs,
+  common::Status Execute(const SessionState& session_state, concurrency::ThreadPool* thread_pool, const std::vector<int>& feed_mlvalue_idxs,
                          const std::vector<OrtValue>& feeds, const std::vector<int>& fetch_mlvalue_idxs,
                          std::vector<OrtValue>& fetches,
                          const std::unordered_map<size_t, CustomAllocator>& fetch_allocators,
@@ -31,9 +31,9 @@ class ParallelExecutor : public IExecutor {
  private:
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(ParallelExecutor);
 
-  Status RunNodeAsync(size_t p_node_index, const SessionState& session_state, const logging::Logger& logger);
+  Status RunNodeAsync(size_t p_node_index, const SessionState& session_state, concurrency::ThreadPool* thread_pool, const logging::Logger& logger);
 
-  void EnqueueNode(size_t p_node_index, const SessionState& session_state, const logging::Logger& logger);
+  void EnqueueNode(size_t p_node_index, const SessionState& session_state, concurrency::ThreadPool* thread_pool, const logging::Logger& logger);
 
   void FinishNodeRun(const Status& status) {
     bool finished = false;
