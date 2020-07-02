@@ -113,11 +113,13 @@ class ThreadPoolManager {
   std::vector<std::unique_ptr<onnxruntime::concurrency::ThreadPool>> m_threadPools;
   std::vector<bool> m_freePools;
   std::mutex m_freePoolsLock;
+  std::condition_variable m_cv;
+  int m_numFreePools = 0;
   static const int DefaultThreadsPoolSize = 2;
 };
 
 ThreadPoolManager::ThreadPoolManager() {
-  std::lock_guard<std::mutex> lock(m_freePoolsLock);
+  std::unique_lock<std::mutex> lock(m_freePoolsLock);
 
   auto totalWorkers = GetEnvrionmentVarOrDefault("ONNX_TOTAL_THREAD_POOL_WORKERS", std::thread::hardware_concurrency() / 2);
   auto threadPoolSize = GetEnvrionmentVarOrDefault("ONNX_THREAD_POOL_SIZE", DefaultThreadsPoolSize);
@@ -162,14 +164,16 @@ ThreadPoolManager::ThreadPoolManager() {
       }
     }
 
-    m_threadPools.emplace_back(concurrency::CreateThreadPool(&Env::Default(), params, concurrency::ThreadPoolType::INTRA_OP, nullptr));
+    m_threadPools.emplace_back(concurrency::CreateThreadPool(&Env::Default(), params, concurrency::ThreadPoolType::INTRA_OP));
     m_freePools.push_back(true);
+    m_numFreePools++;
   }
+
+  // notify any waiters
+  m_cv.notify_all();
 }
 
 ThreadPoolManager::~ThreadPoolManager() {
-  int lockedCount = 0;
-
   //
   // we need to wait for all thread pools to be freed in order to return
   //
@@ -178,52 +182,51 @@ ThreadPoolManager::~ThreadPoolManager() {
   // method only when LockThreadPool will never be called again
   //
 
-  for (;;) {
-    {
-      std::lock_guard<std::mutex> lock(m_freePoolsLock);
+  std::unique_lock<std::mutex> lock(m_freePoolsLock);
 
-      for (int i = 0; i < m_threadPools.size(); ++i) {
-        if (m_freePools[i]) {
-          m_freePools[i] = false;
-          ++lockedCount;
-        }
-      }
-    }
-
-    // return if we've locked all the pools
-    if (lockedCount == m_threadPools.size()) {
-      return;
-    }
-
-    // wait for pools to be released
-    Sleep(0);
+  while (m_numFreePools != m_freePools.size()) {
+    m_cv.wait(lock);
   }
+
+  for (int i = 0; i < m_threadPools.size(); ++i) {
+    m_freePools[i] = false;
+
+  }
+
+  m_numFreePools = 0;
 }
 
 onnxruntime::concurrency::ThreadPool* ThreadPoolManager::LockThreadPool() {
-  for (;;) {
-    std::lock_guard<std::mutex> lock(m_freePoolsLock);
+  std::unique_lock<std::mutex> lock(m_freePoolsLock);
 
-    for (int i = 0; i < m_threadPools.size(); ++i) {
-      if (m_freePools[i]) {
-        m_freePools[i] = false;
-        return m_threadPools[i].get();
-      }
+  while (m_numFreePools == 0) {
+    m_cv.wait(lock);
+  }
+
+  // if we get here, we should have at least one free pool
+  for (int i = 0; i < m_threadPools.size(); ++i) {
+    if (m_freePools[i]) {
+      m_freePools[i] = false;
+      m_numFreePools--;
+      return m_threadPools[i].get();
     }
-    
-    // we weren't able to find a free pool, there's nothing we can do but wait
-    Sleep(0);
   }
 }
 
 void ThreadPoolManager::ReleaseThreadPool(onnxruntime::concurrency::ThreadPool* threadPool) {
-  std::lock_guard<std::mutex> lock(m_freePoolsLock);
+  {
+    std::lock_guard<std::mutex> lock(m_freePoolsLock);
 
-  for (int i = 0; i < m_threadPools.size(); ++i) {
-    if (m_threadPools[i].get() == threadPool) {
-      m_freePools[i] = true;
+    for (int i = 0; i < m_threadPools.size(); ++i) {
+      if (m_threadPools[i].get() == threadPool) {
+        m_freePools[i] = true;
+        m_numFreePools++;
+      }
     }
   }
+
+  // notify one waiter
+  m_cv.notify_one();
 }
 
 class ThreadPoolLock {
