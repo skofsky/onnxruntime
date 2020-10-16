@@ -32,6 +32,7 @@
 #elif defined(_MSC_VER)
 #pragma warning(pop)
 #endif
+#include "core/common/denormal.h"
 #include "core/common/make_unique.h"
 #include "core/platform/ort_mutex.h"
 #include "core/platform/Barrier.h"
@@ -405,6 +406,7 @@ class ThreadPoolTempl : public onnxruntime::concurrency::ExtendedThreadPoolInter
       : env_(env),
         num_threads_(num_threads),
         allow_spinning_(allow_spinning),
+        set_denormal_as_zero_(thread_options.set_denormal_as_zero),
         worker_data_(num_threads),
         all_coprimes_(num_threads),
         blocked_(0),
@@ -455,6 +457,11 @@ class ThreadPoolTempl : public onnxruntime::concurrency::ExtendedThreadPoolInter
     for (size_t i = 0; i < worker_data_.size(); ++i) worker_data_[i].thread.reset();
   }
 
+  // Run fn().  Ordinarily, the function will be added to the thread pool and executed
+  // by a worker thread.  If the thread pool rejects the work then fn() will instead
+  // execute synchronously during Schedule(fn).  Currently the thread pool will only
+  // reject work if the queue of pending work is full.
+
   void Schedule(std::function<void()> fn) override {
     Task t = env_.CreateTask(std::move(fn));
     PerThread* pt = GetPerThread();
@@ -469,13 +476,15 @@ class ThreadPoolTempl : public onnxruntime::concurrency::ExtendedThreadPoolInter
       WorkerData &td = worker_data_[q_idx];
       Queue& q = td.queue;
       t = q.PushBack(std::move(t));
-      if (t.f) {
-        // The queue rejected the work; run it directly
-        env_.ExecuteTask(t);
-      } else {
+      if (!t.f) {
         // The queue accepted the work; ensure that the thread will pick it up
         td.EnsureAwake();
       }
+    }
+
+    // Run the work directly if the queue rejected the work
+    if (t.f) {
+      env_.ExecuteTask(t);
     }
   }
 
@@ -550,7 +559,7 @@ void RunInParallel(std::function<void()> fn, unsigned n) override {
     // item.  This lets us remove any work items that do not get executed by the threads
     // that we push them to.
     std::vector<std::pair<int, unsigned>> pending_items;
-    Barrier b(n);
+    Barrier b(n, allow_spinning_);
 
     my_pt->in_parallel = true;
     if (!my_pt->tag.Get()) {
@@ -794,6 +803,7 @@ int CurrentThreadId() const EIGEN_FINAL {
   Environment& env_;
   const int num_threads_;
   const bool allow_spinning_;
+  const bool set_denormal_as_zero_;
   Eigen::MaxSizeVector<WorkerData> worker_data_;
   Eigen::MaxSizeVector<Eigen::MaxSizeVector<unsigned>> all_coprimes_;
   std::atomic<unsigned> blocked_;  // Count of blocked workers, used as a termination condition
@@ -838,6 +848,8 @@ int CurrentThreadId() const EIGEN_FINAL {
     const int log2_spin = 20;
     const int spin_count = allow_spinning_ ? (1ull<<log2_spin) : 0;
     const int steal_count = spin_count/100;
+
+    SetDenormalAsZero(set_denormal_as_zero_);
 
     while (!cancelled_ && !should_exit) {
         Task t = q.PopFront();

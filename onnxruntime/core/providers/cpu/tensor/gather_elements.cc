@@ -6,9 +6,19 @@
 
 namespace onnxruntime {
 
-ONNX_CPU_OPERATOR_KERNEL(
+ONNX_CPU_OPERATOR_VERSIONED_KERNEL(
     GatherElements,
     11,
+    12,
+    KernelDefBuilder()
+        .TypeConstraint("T", DataTypeImpl::AllTensorTypes())
+        .TypeConstraint("Tind", std::vector<MLDataType>{DataTypeImpl::GetTensorType<int32_t>(),
+                                                        DataTypeImpl::GetTensorType<int64_t>()}),
+    GatherElements);
+
+ONNX_CPU_OPERATOR_KERNEL(
+    GatherElements,
+    13,
     KernelDefBuilder()
         .TypeConstraint("T", DataTypeImpl::AllTensorTypes())
         .TypeConstraint("Tind", std::vector<MLDataType>{DataTypeImpl::GetTensorType<int32_t>(),
@@ -249,7 +259,7 @@ Status GatherElements::Compute(OpKernelContext* context) const {
   if (!status.IsOK())
     return status;
 
-  Tensor* output_tensor = context->Output(0, TensorShape(indices_shape));
+  Tensor* output_tensor = context->Output(0, indices_shape);
 
   const auto& input_data_type = input_tensor->DataType();
   if (input_data_type != output_tensor->DataType())
@@ -260,10 +270,8 @@ Status GatherElements::Compute(OpKernelContext* context) const {
   if (indices_shape.Size() == 0)
     return Status::OK();
 
-
   if (input_tensor->IsDataTypeString())
     core_impl<true, std::string>(input_tensor, indices_tensor, output_tensor, axis);
-
   else
     core_impl<false, int8_t>(input_tensor, indices_tensor, output_tensor, axis);
 

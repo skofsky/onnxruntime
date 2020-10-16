@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/cpu/nn/qlinearconv.h"
-
+#include "core/framework/op_kernel.h"
+#include "core/providers/cpu/nn/conv_attributes.h"
 #include "core/common/safeint.h"
 #include "core/providers/common.h"
 #include "core/util/math.h"
@@ -12,6 +12,15 @@
 #include "core/mlas/inc/mlas.h"
 
 namespace onnxruntime {
+
+class QLinearConv : public OpKernel {
+ public:
+  explicit QLinearConv(const OpKernelInfo& info) : OpKernel(info), conv_attrs_(info) {}
+
+  Status Compute(OpKernelContext* context) const override;
+
+  ConvAttributes conv_attrs_;
+};
 
 ONNX_OPERATOR_KERNEL_EX(
     QLinearConv,
@@ -88,7 +97,7 @@ Status QLinearConv::Compute(OpKernelContext* context) const {
 
   std::vector<int64_t> Y_dims({N, M});
   TensorShape input_shape = X->Shape().Slice(2);
-  ORT_RETURN_IF_ERROR(conv_attrs_.InferOutputShape(input_shape, kernel_shape, strides, dilations, &pads, &Y_dims));
+  ORT_RETURN_IF_ERROR(conv_attrs_.InferOutputShape(input_shape, kernel_shape, strides, dilations, pads, Y_dims));
   Tensor* Y = context->Output(0, TensorShape(Y_dims));
   TensorShape output_shape = Y->Shape().Slice(2);
 
@@ -133,7 +142,7 @@ Status QLinearConv::Compute(OpKernelContext* context) const {
 
   const float real_multiplier = (X_scale_value * W_scale_value) / Y_scale_value;
 
-#ifdef MLAS_SUPPORTS_GEMM_U8X8
+#ifdef MLAS_SUPPORTS_GEMM_U8X8_AND_REQUANTIZE_OUTPUT
   // Use an intermediate int32_t buffer for the GEMM computation before
   // requantizing to the output type.
   auto gemm_output_data = alloc->Alloc(SafeInt<size_t>(sizeof(int32_t)) * Y_offset);
@@ -190,7 +199,7 @@ Status QLinearConv::Compute(OpKernelContext* context) const {
         }
       }
 
-#ifdef MLAS_SUPPORTS_GEMM_U8X8
+#ifdef MLAS_SUPPORTS_GEMM_U8X8_AND_REQUANTIZE_OUTPUT
       QGemm(static_cast<int>(M / conv_attrs_.group),
             static_cast<int>(output_image_size),
             static_cast<int>(kernel_dim),
@@ -200,6 +209,7 @@ Status QLinearConv::Compute(OpKernelContext* context) const {
             col_buffer_data == nullptr ? Xdata : col_buffer_data,
             static_cast<int>(output_image_size),
             X_zero_point_value,
+            false,
             gemm_output,
             static_cast<int>(output_image_size),
             context->GetOperatorThreadPool());

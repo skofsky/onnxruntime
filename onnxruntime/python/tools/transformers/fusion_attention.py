@@ -4,12 +4,20 @@
 #--------------------------------------------------------------------------
 import numpy as np
 from logging import getLogger
+from enum import Enum
 from onnx import helper, numpy_helper, TensorProto
 from onnx_model import OnnxModel
 from fusion_base import Fusion
 from fusion_utils import FusionUtils
 
 logger = getLogger(__name__)
+
+
+class AttentionMaskFormat:
+    MaskIndexEnd = 0
+    MaskIndexEndAndStart = 1
+    AttentionMask = 2
+    NoMask = 3
 
 
 class AttentionMask():
@@ -23,6 +31,10 @@ class AttentionMask():
         # A lookup table with mask input as key, and cast (to int32) output as value
         self.mask_casted = {}
         self.utils = FusionUtils(model)
+        self.mask_format = AttentionMaskFormat.MaskIndexEnd
+
+    def set_mask_format(self, mask_format: AttentionMaskFormat):
+        self.mask_format = mask_format
 
     def set_mask_indice(self, mask, mask_index):
         if mask in self.mask_indice:
@@ -34,6 +46,9 @@ class AttentionMask():
         return next(iter(self.mask_indice))
 
     def process_mask(self, input):
+        if self.mask_format == AttentionMaskFormat.NoMask:
+            return None
+
         if input in self.mask_indice:
             return self.mask_indice[input]
 
@@ -47,7 +62,12 @@ class AttentionMask():
         if casted:
             self.mask_casted[input] = input_name
 
-        # Add a mask processing node
+        # Attention supports int32 attention mask (2D) since 1.4.0
+        if self.mask_format == AttentionMaskFormat.AttentionMask:
+            self.mask_indice[input] = input_name
+            return input_name
+
+        # Add a mask processing node to convert attention mask to mask index (1D)
         output_name = self.model.create_node_name('mask_index')
         mask_index_node = helper.make_node('ReduceSum',
                                            inputs=[input_name],
@@ -120,7 +140,10 @@ class FusionAttention(Fusion):
                                   vals=qkv_bias.flatten().tolist())
         self.model.add_initializer(bias)
 
-        attnetion_inputs = [input, attention_node_name + '_qkv_weight', attention_node_name + '_qkv_bias', mask_index]
+        attnetion_inputs = [input, attention_node_name + '_qkv_weight', attention_node_name + '_qkv_bias']
+        if mask_index is not None:
+            attnetion_inputs.append(mask_index)
+
         attention_node = helper.make_node('Attention',
                                           inputs=attnetion_inputs,
                                           outputs=[output],
@@ -134,8 +157,17 @@ class FusionAttention(Fusion):
         # SkipLayerNormalization has two inputs, and one of them is the root input for attention.
         qkv_nodes = self.model.match_parent_path(normalize_node, ['Add', 'MatMul', 'Reshape', 'Transpose', 'MatMul'],
                                                  [None, 0, 0, 0, 0])
-        if qkv_nodes is None:
-            return
+        einsum_node = None
+        if qkv_nodes is not None:
+            (_, matmul_qkv, reshape_qkv, transpose_qkv, matmul_qkv) = qkv_nodes
+        else:
+            # Match Albert
+            qkv_nodes = self.model.match_parent_path(normalize_node, ['Add', 'Einsum', 'Transpose', 'MatMul'],
+                                                     [1, 0, 0, 0])
+            if qkv_nodes is not None:
+                (_, einsum_node, transpose_qkv, matmul_qkv) = qkv_nodes
+            else:
+                return
 
         other_inputs = []
         for i, input in enumerate(normalize_node.input):
@@ -154,27 +186,40 @@ class FusionAttention(Fusion):
         if children_types.count('MatMul') != 3:
             return
 
-        (_, matmul_qkv, reshape_qkv, transpose_qkv, matmul_qkv) = qkv_nodes
-
         v_nodes = self.model.match_parent_path(matmul_qkv, ['Transpose', 'Reshape', 'Add', 'MatMul'], [1, 0, 0, 0])
         if v_nodes is None:
             logger.debug("fuse_attention: failed to match v path")
             return
         (_, _, add_v, matmul_v) = v_nodes
 
+        is_distill = False
         qk_nodes = self.model.match_parent_path(matmul_qkv, ['Softmax', 'Add', 'Div', 'MatMul'], [0, 0, 0, 0])
         if qk_nodes is None:
             qk_nodes = self.model.match_parent_path(matmul_qkv, ['Softmax', 'Add', 'Mul', 'MatMul'], [0, 0, 0, 0])
             if qk_nodes is None:
-                logger.debug("fuse_attention: failed to match qk path")
-                return
-        (_, add_qk, _, matmul_qk) = qk_nodes
+                qk_nodes = self.model.match_parent_path(matmul_qkv, ['Softmax', 'Where', 'MatMul', 'Div'], [0, 0, 2, 0])
+                is_distill = True
+                if qk_nodes is None:
+                    logger.debug("fuse_attention: failed to match qk path")
+                    return
+
+        add_qk = None
+        matmul_qk = None
+        where_qk = None
+        if is_distill:
+            (_, where_qk, matmul_qk, _) = qk_nodes
+        else:
+            (_, add_qk, _, matmul_qk) = qk_nodes
 
         q_nodes = self.model.match_parent_path(matmul_qk, ['Transpose', 'Reshape', 'Add', 'MatMul'], [0, 0, 0, 0])
         if q_nodes is None:
-            logger.debug("fuse_attention: failed to match q path")
-            return
-        (_, _, add_q, matmul_q) = q_nodes
+            q_nodes = self.model.match_parent_path(matmul_qk, ['Div', 'Transpose', 'Reshape', 'Add', 'MatMul'],
+                                                   [0, 0, 0, 0, 0])
+            if q_nodes is None:
+                logger.debug("fuse_attention: failed to match q path")
+                return
+        add_q = q_nodes[-2]
+        matmul_q = q_nodes[-1]
 
         k_nodes = self.model.match_parent_path(matmul_qk, ['Transpose', 'Reshape', 'Add', 'MatMul'], [1, 0, 0, 0])
         if k_nodes is None:
@@ -187,9 +232,16 @@ class FusionAttention(Fusion):
         matmul_k = k_nodes[-1]
 
         # Note that Cast might be removed by OnnxRuntime so we match two patterns here.
-        _, mask_nodes, _ = self.model.match_parent_paths(
-            add_qk, [(['Mul', 'Sub', 'Cast', 'Unsqueeze', 'Unsqueeze'], [1, 0, 1, 0, 0]),
-                     (['Mul', 'Sub', 'Unsqueeze', 'Unsqueeze'], [1, 0, 1, 0])], output_name_to_node)
+        mask_nodes = None
+        if is_distill:
+            _, mask_nodes, _ = self.model.match_parent_paths(where_qk,
+                                                             [(['Expand', 'Reshape', 'Equal'], [0, 0, 0]),
+                                                              (['Cast', 'Expand', 'Reshape', 'Equal'], [0, 0, 0, 0])],
+                                                             output_name_to_node)
+        else:
+            _, mask_nodes, _ = self.model.match_parent_paths(
+                add_qk, [(['Mul', 'Sub', 'Cast', 'Unsqueeze', 'Unsqueeze'], [1, 0, 1, 0, 0]),
+                         (['Mul', 'Sub', 'Unsqueeze', 'Unsqueeze'], [1, 0, 1, 0])], output_name_to_node)
         if mask_nodes is None:
             logger.debug("fuse_attention: failed to match mask path")
             return
@@ -197,14 +249,28 @@ class FusionAttention(Fusion):
         if matmul_v.input[0] == root_input and matmul_q.input[0] == root_input and matmul_v.input[0] == root_input:
             mask_index = self.attention_mask.process_mask(mask_nodes[-1].input[0])
 
+            attention_last_node = reshape_qkv if einsum_node is None else transpose_qkv
+
             new_node = self.create_attention_node(mask_index, matmul_q, matmul_k, matmul_v, add_q, add_k, add_v,
-                                                  root_input, reshape_qkv.output[0])
+                                                  root_input, attention_last_node.output[0])
             if new_node is None:
                 return
 
             self.nodes_to_add.append(new_node)
 
-            self.nodes_to_remove.extend([reshape_qkv, transpose_qkv, matmul_qkv])
+            if einsum_node is not None:
+                unique_index = einsum_node.input[0]
+                new_edge = "edge_modified_" + unique_index
+                shape_tensor = self.model.convert_list_to_tensor(
+                    "shape_modified_tensor" + unique_index, TensorProto.INT64, [4],
+                    [0, 0, self.num_heads, int(self.hidden_size / self.num_heads)])
+                self.model.add_initializer(shape_tensor)
+                self.model.add_node(
+                    helper.make_node("Reshape", [attention_last_node.output[0], shape_tensor.name], [new_edge],
+                                     "reshape_modified_" + unique_index))
+                einsum_node.input[0] = new_edge
+
+            self.nodes_to_remove.extend([attention_last_node, transpose_qkv, matmul_qkv])
             self.nodes_to_remove.extend(qk_nodes)
             self.nodes_to_remove.extend(q_nodes)
             self.nodes_to_remove.extend(k_nodes)

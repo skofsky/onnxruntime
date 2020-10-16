@@ -23,6 +23,7 @@ Abstract:
 #include <limits>
 #include <cmath>
 #include <type_traits>
+#include <stdexcept>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -89,29 +90,6 @@ Abstract:
 #define MLAS_UNREFERENCED_PARAMETER(parameter) ((void)(parameter))
 
 //
-// Select the target architecture.
-//
-
-#if defined(_M_AMD64) || defined(__x86_64__)
-#define MLAS_TARGET_AMD64
-#endif
-#if defined(_M_IX86) || defined(__i386__)
-#define MLAS_TARGET_IX86
-#endif
-#if defined(MLAS_TARGET_AMD64) || defined(MLAS_TARGET_IX86)
-#define MLAS_TARGET_AMD64_IX86
-#endif
-#if defined(_M_ARM64) || defined(__aarch64__)
-#define MLAS_TARGET_ARM64
-#endif
-#if defined(_M_ARM) || defined(__arm__)
-#define MLAS_TARGET_ARM
-#endif
-#if defined(__VSX__)
-#define MLAS_TARGET_POWER
-#endif
-
-//
 // Select the threading model.
 //
 // N.B. MLAS_NO_ONNXRUNTIME_THREADPOOL is used to build MLAS test code outside
@@ -139,6 +117,8 @@ Abstract:
 
 #define MLAS_SGEMM_STRIDEN                          128
 #define MLAS_SGEMM_STRIDEK                          128
+#define MLAS_SGEMM_PACKED_STRIDEN                   128
+#define MLAS_SGEMM_PACKED_STRIDEK                   256
 #define MLAS_DGEMM_STRIDEN                          64
 #define MLAS_DGEMM_STRIDEK                          128
 
@@ -485,8 +465,8 @@ void
     float ScaleC,
     int32_t ZeroPointC,
     int8_t* OutputC,
-    size_t LengthA,
-    size_t LengthB
+    size_t N,
+    bool IsScalarB
     );
 
 typedef MLAS_QLINEAR_BINARY_OP_S8_KERNEL* PMLAS_QLINEAR_BINARY_OP_S8_KERNEL;
@@ -503,8 +483,8 @@ void
     float ScaleC,
     int32_t ZeroPointC,
     uint8_t* OutputC,
-    size_t LengthA,
-    size_t LengthB
+    size_t N,
+    bool IsScalarB
     );
 
 typedef MLAS_QLINEAR_BINARY_OP_U8_KERNEL* PMLAS_QLINEAR_BINARY_OP_U8_KERNEL;
@@ -543,10 +523,6 @@ extern "C" {
     MLAS_SGEMM_TRANSPOSE_PACKB_BLOCK_ROUTINE MlasSgemmTransposePackB16x4Avx;
 #endif
 
-#if defined(MLAS_TARGET_AMD64_IX86)
-    MLAS_GEMM_U8X8_OPERATION MlasGemmU8X8OperationSse;
-    MLAS_GEMM_U8X8_OPERATION MlasGemmU8S8OperationAvx2;
-    MLAS_GEMM_U8X8_OPERATION MlasGemmU8U8OperationAvx2;
 #if defined(MLAS_TARGET_AMD64)
     MLAS_GEMM_U8S8_KERNEL MlasGemmU8S8KernelAvx2;
     MLAS_GEMV_U8S8_KERNEL MlasGemvU8S8KernelAvx2;
@@ -556,7 +532,6 @@ extern "C" {
     MLAS_GEMV_U8S8_KERNEL MlasGemvU8S8KernelAvx512Vnni;
     MLAS_GEMM_U8U8_KERNEL MlasGemmU8U8KernelAvx2;
     MLAS_GEMM_U8U8_KERNEL MlasGemmU8U8KernelAvx512Core;
-#endif
 #endif
 
 #if defined(MLAS_TARGET_AMD64)
@@ -675,6 +650,28 @@ MlasSgemmOperation(
     );
 
 //
+// Quantized integer matrix/matrix multiply operation.
+//
+
+struct MLAS_GEMM_U8X8_KERNEL_SSE;
+struct MLAS_GEMM_U8S8_KERNEL_AVX2;
+struct MLAS_GEMM_U8U8_KERNEL_AVX2;
+
+template<typename KernelType>
+void
+MLASCALL
+MlasGemmU8X8Operation(
+    const MLAS_GEMM_U8X8_WORK_BLOCK* WorkBlock
+    );
+
+template<typename KernelType>
+void
+MLASCALL
+MlasGemmU8X8PackedOperation(
+    const MLAS_GEMM_U8X8_WORK_BLOCK* WorkBlock
+    );
+
+//
 // Environment information class.
 //
 
@@ -684,8 +681,6 @@ struct MLAS_PLATFORM {
 
 #if defined(MLAS_TARGET_AMD64_IX86)
     PMLAS_GEMM_FLOAT_KERNEL GemmFloatKernel;
-    PMLAS_GEMM_U8X8_OPERATION GemmU8S8Operation;
-    PMLAS_GEMM_U8X8_OPERATION GemmU8U8Operation;
 #endif
 
 #if defined(MLAS_TARGET_AMD64)
@@ -693,8 +688,12 @@ struct MLAS_PLATFORM {
     PMLAS_SGEMM_KERNEL_M1_ROUTINE KernelM1TransposeBRoutine;
     PMLAS_SGEMM_TRANSPOSE_PACKB_BLOCK_ROUTINE TransposePackB16x4Routine;
     PMLAS_GEMM_DOUBLE_KERNEL GemmDoubleKernel;
+    PMLAS_GEMM_U8X8_OPERATION GemmU8S8Operation;
+    PMLAS_GEMM_U8X8_OPERATION GemmU8S8PackedOperation;
     PMLAS_GEMM_U8S8_KERNEL GemmU8S8Kernel;
     PMLAS_GEMV_U8S8_KERNEL GemvU8S8Kernel;
+    PMLAS_GEMM_U8X8_OPERATION GemmU8U8Operation;
+    PMLAS_GEMM_U8X8_OPERATION GemmU8U8PackedOperation;
     PMLAS_GEMM_U8U8_KERNEL GemmU8U8Kernel;
     PMLAS_CONV_FLOAT_KERNEL ConvNchwFloatKernel;
     PMLAS_CONV_FLOAT_KERNEL ConvNchwcFloatKernel;
@@ -755,7 +754,7 @@ MlasGetMaximumThreadCount(
     return 1;
 #endif
 #else
-	return onnxruntime::concurrency::ThreadPool::NumThreads(ThreadPool);
+    return onnxruntime::concurrency::ThreadPool::DegreeOfParallelism(ThreadPool);
 #endif
 }
 
@@ -865,6 +864,21 @@ MlasCastToInt32x4(MLAS_FLOAT32X4 Vector)
     return vec_cts(Vector, 0);
 #else
     return MLAS_INT32X4{int32_t(Vector[0]), int32_t(Vector[1]), int32_t(Vector[2]), int32_t(Vector[3])};
+#endif
+}
+
+MLAS_FORCEINLINE
+MLAS_FLOAT32X4
+MlasCastToFloat32x4(MLAS_INT32X4 Vector)
+{
+#if defined(MLAS_NEON_INTRINSICS)
+    return vcvtq_f32_s32(Vector);
+#elif defined(MLAS_SSE2_INTRINSICS)
+    return _mm_cvtepi32_ps(Vector);
+#elif defined(MLAS_VSX_INTRINSICS)
+    return vec_ctf(Vector, 0);
+#else
+    return MLAS_FLOAT32X4{float(Vector[0]), float(Vector[1]), float(Vector[2]), float(Vector[3])};
 #endif
 }
 

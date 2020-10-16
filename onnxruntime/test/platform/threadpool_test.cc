@@ -104,6 +104,63 @@ void TestMultipleParallelFor(const std::string& name, int num_threads, int num_c
   }
 }
 
+void TestBurstScheduling(const std::string& name, int num_tasks) {
+  // Test submitting a burst of functions for executing.  The aim is to provoke cases such
+  // as the thread pool's work queues being full.
+  for (int rep = 0; rep < 5; rep++) {
+    std::atomic<int> ctr{0};
+    // Schedule a burst of num_tasks back-to-back, and then cleanly shut down the thread
+    // pool.  The synchronization barrier during shut down should ensure that all of the
+    // tasks are complete.  Note that if the thread pool's work queues are full, then a
+    // call to tp->Schedule() may run its argument synchronously.  In any case, we expect
+    // ctr==num_tasks.
+    CreateThreadPoolAndTest(name, 2, [&](ThreadPool* tp) {
+      // First variant : schedule from outside the pool
+      for (int tasks = 0; tasks < num_tasks; tasks++) {
+        tp->Schedule([&]() {
+          ctr++;
+        });
+      }
+    });
+    ASSERT_TRUE(ctr == num_tasks);
+    CreateThreadPoolAndTest(name, 2, [&](ThreadPool* tp) {
+      // Second variant : schedule from inside the pool
+      tp->Schedule([&, tp]() {
+        for (int tasks = 0; tasks < num_tasks; tasks++) {
+          tp->Schedule([&]() {
+            ctr++;
+          });
+        }
+      });
+    });
+    ASSERT_TRUE(ctr == num_tasks*2);
+  }
+}
+
+void TestPoolCreation(const std::string&, int iter) {
+  // Test creating and destroying thread pools.  This can be used with Valgrind to help
+  // check for memory leaks related to the initialization and clean-up code.  For instance
+  //
+  //  valgrind --leak-check=full ./onnxruntime_test_all --gtest_filter=ThreadPoolTest.TestPoolCreation_10Iter
+  //
+  // We create #iter thread pools, and within each of them run a loop of #per_iter steps.
+  std::atomic<std::ptrdiff_t> ctr{0};
+  constexpr std::ptrdiff_t per_iter = 1024;
+  constexpr int num_threads = 4;
+  for (auto i = 0; i < iter; i++) {
+    auto tp = onnxruntime::make_unique<ThreadPool>(&onnxruntime::Env::Default(),
+                                                   onnxruntime::ThreadOptions(),
+                                                   nullptr,
+                                                   num_threads,
+                                                   true);
+    tp->ParallelFor(per_iter, 0.0,
+                    [&](std::ptrdiff_t s, std::ptrdiff_t e) {
+                      ctr += e - s;
+                    });
+  }
+  ASSERT_EQ(ctr, iter * per_iter);
+}
+
 }  // namespace
 
 namespace onnxruntime {
@@ -202,6 +259,37 @@ TEST(ThreadPoolTest, TestMultipleParallelFor_4Thread_4Conc_8Tasks) {
 TEST(ThreadPoolTest, TestMultipleParallelFor_4Thread_4Conc_1MTasks) {
   TestMultipleParallelFor("TestMultipleParallelFor_4Thread_4Conc_1MTasks", 4, 4, 1000000);
 }
+
+TEST(ThreadPoolTest, TestBurstScheduling_0Tasks) {
+  TestBurstScheduling("TestBurstScheduling_0Tasks", 0);
+}
+
+TEST(ThreadPoolTest, TestBurstScheduling_1Task) {
+  TestBurstScheduling("TestBurstScheduling_1Task", 1);
+}
+
+TEST(ThreadPoolTest, TestBurstScheduling_16Tasks) {
+  TestBurstScheduling("TestBurstScheduling_16Tasks", 16);
+}
+
+TEST(ThreadPoolTest, TestBurstScheduling_65536Task) {
+  // Attempt to exhaust the size of the queues used in the thread pool to
+  // buffer tasks.
+  TestBurstScheduling("TestBurstScheduling_65536Tasks", 65536);
+}
+
+TEST(ThreadPoolTest, TestPoolCreation_1Iter) {
+  TestPoolCreation("TestPoolCreation_1Iter", 1);
+}
+
+TEST(ThreadPoolTest, TestPoolCreation_10Iter) {
+  TestPoolCreation("TestPoolCreation_10Iter", 10);
+}
+
+TEST(ThreadPoolTest, TestPoolCreation_100Iter) {
+  TestPoolCreation("TestPoolCreation_100Iter", 100);
+}
+
 #ifdef _WIN32
 TEST(ThreadPoolTest, TestStackSize) {
   ThreadOptions to;
