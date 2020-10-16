@@ -211,6 +211,9 @@ onnxruntime::concurrency::ThreadPool* ThreadPoolManager::LockThreadPool() {
       return m_threadPools[i].get();
     }
   }
+
+  // should never get here
+  return nullptr;
 }
 
 void ThreadPoolManager::ReleaseThreadPool(onnxruntime::concurrency::ThreadPool* threadPool) {
@@ -221,6 +224,7 @@ void ThreadPoolManager::ReleaseThreadPool(onnxruntime::concurrency::ThreadPool* 
       if (m_threadPools[i].get() == threadPool) {
         m_freePools[i] = true;
         m_numFreePools++;
+        break;
       }
     }
   }
@@ -1304,6 +1308,8 @@ Status InferenceSession::Run(const RunOptions& run_options, const std::vector<st
                              const std::vector<OrtValue>& feeds, const std::vector<std::string>& output_names,
                              std::vector<OrtValue>* p_fetches) {
   TimePoint tp;
+  // lock the thread pool
+  ThreadPoolLock lock(*threadPoolManager);
   if (session_profiler_.IsEnabled()) {
     tp = session_profiler_.StartTime();
   }
@@ -1370,14 +1376,12 @@ Status InferenceSession::Run(const RunOptions& run_options, const std::vector<st
 
     if (run_options.only_execute_path_to_fetches) {
       session_state_->UpdateToBeExecutedNodes(feeds_fetches_manager.GetFeedsFetchesInfo().fetches_mlvalue_idxs);
-
-      ThreadPoolLock lock(*threadPoolManager);
-
-      // execute the graph
-      ORT_CHECK_AND_SET_RETVAL(utils::ExecuteGraph(*session_state_, lock.GetThreadPool(), feeds_fetches_manager, feeds, *p_fetches,
-                                                   session_options_.execution_mode, run_options.terminate, run_logger,
-                                                   run_options.only_execute_path_to_fetches));
     }
+
+    // execute the graph
+    ORT_CHECK_AND_SET_RETVAL(utils::ExecuteGraph(*session_state_, lock.GetThreadPool(), feeds_fetches_manager, feeds, *p_fetches,
+                                                session_options_.execution_mode, run_options.terminate, run_logger,
+                                                run_options.only_execute_path_to_fetches));
     
   } catch (const std::exception& e) {
     retval = Status(common::ONNXRUNTIME, common::FAIL, e.what());

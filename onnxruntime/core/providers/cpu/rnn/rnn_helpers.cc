@@ -398,6 +398,7 @@ void tanh_exact_m(const float* ps1, const float* ps1_c, const float* ps2, float*
   }
 }
 
+/*
 void sigmoid(float* pd, int c, float alpha, float beta) {
   ORT_UNUSED_PARAMETER(alpha);
   ORT_UNUSED_PARAMETER(beta);
@@ -418,6 +419,96 @@ void sigmoid(float* pd, int c, float alpha, float beta) {
     q = x2 * q + beta_2;
     q = x2 * q + beta_0;
     pd[i] = 0.5f * (1 + (p / q));
+  }
+}
+*/
+
+namespace constants {
+const float alpha_1 = 4.89352455891786e-03f;
+const float alpha_3 = 6.37261928875436e-04f;
+const float alpha_5 = 1.48572235717979e-05f;
+const float alpha_7 = 5.12229709037114e-08f;
+const float alpha_9 = -8.60467152213735e-11f;
+const float alpha_11 = 2.00018790482477e-13f;
+const float alpha_13 = -2.76076847742355e-16f;
+const float beta_0 = 4.89352518554385e-03f;
+const float beta_2 = 2.26843463243900e-03f;
+const float beta_4 = 1.18534705686654e-04f;
+const float beta_6 = 1.19825839466702e-06f;
+const float sigmoid_bound = 20.0f;
+const float tanh_bound = 10.0f;
+} // namespace constants
+
+
+void sigmoid(float* pd, int c, float alpha, float beta) {
+  int i = 0;
+  __m256 lower_bound = _mm256_set1_ps(-constants::sigmoid_bound);  // 0
+  __m256 upper_bound = _mm256_set1_ps(constants::sigmoid_bound);   // 1
+  __m256 alpha_1 = _mm256_set1_ps(constants::alpha_1);             // 2
+  __m256 alpha_3 = _mm256_set1_ps(constants::alpha_3);             // 3
+  __m256 alpha_5 = _mm256_set1_ps(constants::alpha_5);             // 4
+  __m256 alpha_7 = _mm256_set1_ps(constants::alpha_7);             // 5
+  __m256 alpha_9 = _mm256_set1_ps(constants::alpha_9);             // 6
+  __m256 alpha_13 = _mm256_set1_ps(constants::alpha_13);           // 7
+  __m256 alpha_11 = _mm256_set1_ps(constants::alpha_11);           // 8
+  __m256 beta_0 = _mm256_set1_ps(constants::beta_0);               // 9
+  __m256 beta_2 = _mm256_set1_ps(constants::beta_2);               // 10
+  __m256 beta_4 = _mm256_set1_ps(constants::beta_4);               // 11
+  __m256 beta_6 = _mm256_set1_ps(constants::beta_6);               // 12
+  __m256 half = _mm256_set1_ps(0.5f);                              // 13
+  __m256 one = _mm256_set1_ps(1);                                  // 13
+
+  while (i + 8 <= c) {
+    __m256 pd_vec = _mm256_load_ps(pd + i);  // 14
+
+    pd_vec = _mm256_max_ps(pd_vec, lower_bound);
+    pd_vec = _mm256_min_ps(pd_vec, upper_bound);
+
+    __m256 x = _mm256_mul_ps(half, pd_vec);              // 15
+    __m256 x2 = _mm256_mul_ps(x, x);                     // 16
+    __m256 p = _mm256_fmadd_ps(x2, alpha_13, alpha_11);  // 17
+    p = _mm256_fmadd_ps(x2, p, alpha_9);
+    p = _mm256_fmadd_ps(x2, p, alpha_7);
+    p = _mm256_fmadd_ps(x2, p, alpha_5);
+    p = _mm256_fmadd_ps(x2, p, alpha_3);
+    p = _mm256_fmadd_ps(x2, p, alpha_1);
+    p = _mm256_mul_ps(p, x);
+
+    __m256 q = _mm256_fmadd_ps(x2, beta_6, beta_4);
+    q = _mm256_fmadd_ps(q, x2, beta_2);
+    q = _mm256_fmadd_ps(q, x2, beta_0);
+
+    pd_vec = _mm256_mul_ps(half,
+                           _mm256_add_ps(one,
+                                         _mm256_div_ps(p, q)));
+
+    _mm256_store_ps(pd + i, pd_vec);
+
+    i += 8;
+  }
+
+  while (i < c) {
+    if (pd[i] < -constants::sigmoid_bound)
+      pd[i] = -constants::sigmoid_bound;
+    else if (pd[i] > constants::sigmoid_bound)
+      pd[i] = constants::sigmoid_bound;
+
+    float x = 0.5f * pd[i];
+    float x2 = x * x;
+    float p = x2 * constants::alpha_13 + constants::alpha_11;
+
+    p = x2 * p + constants::alpha_9;
+    p = x2 * p + constants::alpha_7;
+    p = x2 * p + constants::alpha_5;
+    p = x2 * p + constants::alpha_3;
+    p = x2 * p + constants::alpha_1;
+    p = x * p;
+    float q = x2 * constants::beta_6 + constants::beta_4;
+    q = x2 * q + constants::beta_2;
+    q = x2 * q + constants::beta_0;
+    pd[i] = 0.5f * (1 + (p / q));
+
+    ++i;
   }
 }
 

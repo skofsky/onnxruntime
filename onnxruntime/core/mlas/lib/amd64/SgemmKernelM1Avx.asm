@@ -142,18 +142,55 @@ ProcessColumnLoop4:
         lea     rsi,[rdx+rbx*2]             ; compute matrix B plus 2 rows
         vmulps  ymm1,ymm2,YMMWORD PTR [rdx]
         vmulps  ymm6,ymm2,YMMWORD PTR [rdx+32]
-        vmulps  ymm8,ymm3,YMMWORD PTR [rdx+rbx]
-        vaddps  ymm1,ymm1,ymm8
-        vmulps  ymm8,ymm3,YMMWORD PTR [rdx+rbx+32]
-        vaddps  ymm6,ymm6,ymm8
-        vmulps  ymm8,ymm4,YMMWORD PTR [rsi]
-        vaddps  ymm1,ymm1,ymm8
-        vmulps  ymm8,ymm4,YMMWORD PTR [rsi+32]
-        vaddps  ymm6,ymm6,ymm8
-        vmulps  ymm8,ymm5,YMMWORD PTR [rsi+rbx]
-        vaddps  ymm1,ymm1,ymm8
-        vmulps  ymm8,ymm5,YMMWORD PTR [rsi+rbx+32]
-        vaddps  ymm6,ymm6,ymm8
+
+        ;; vmulps  ymm8,ymm3,YMMWORD PTR [rdx+rbx]
+        ;; vaddps  ymm1,ymm1,ymm8
+        
+        vfmadd231ps ymm1,ymm3,YMMWORD PTR [rdx+rbx]
+
+
+        ;; vmulps  ymm8,ymm3,YMMWORD PTR [rdx+rbx+32]
+        ;; vaddps  ymm6,ymm6,ymm8
+
+        vfmadd231ps ymm6, ymm3, YMMWORD PTR [rdx+rbx+32]
+
+        ;; vmulps  ymm8,ymm4,YMMWORD PTR [rsi]
+        ;; vaddps  ymm1,ymm1,ymm8
+
+        vfmadd231ps ymm1, ymm4,YMMWORD PTR [rsi]
+
+        ;; vmulps  ymm8,ymm4,YMMWORD PTR [rsi+32]
+        ;; vaddps  ymm6,ymm6,ymm8
+
+        vfmadd231ps ymm6,ymm4,YMMWORD PTR [rsi+32]
+
+        ;; vmulps  ymm8,ymm5,YMMWORD PTR [rsi+rbx]
+        ;; vaddps  ymm1,ymm1,ymm8
+
+        vfmadd231ps ymm1,ymm5,YMMWORD PTR [rsi+rbx]
+
+        ;; vmulps  ymm8,ymm5,YMMWORD PTR [rsi+rbx+32]
+        ;; vaddps  ymm6,ymm6,ymm8
+
+        vfmadd231ps ymm6,ymm5,YMMWORD PTR [rsi+rbx+32]
+
+        ;; vaddps  ymm1,ymm1,ymm8
+
+        ;; vmulps  ymm8,ymm3,YMMWORD PTR [rdx+rbx+32]
+        ;; vaddps  ymm6,ymm6,ymm8
+
+        ;; vmulps  ymm8,ymm4,YMMWORD PTR [rsi]
+        ;; vaddps  ymm1,ymm1,ymm8
+
+        ;; vmulps  ymm8,ymm4,YMMWORD PTR [rsi+32]
+        ;; vaddps  ymm6,ymm6,ymm8
+
+        ;; vmulps  ymm8,ymm5,YMMWORD PTR [rsi+rbx]
+        ;; vaddps  ymm1,ymm1,ymm8
+
+        ;; vmulps  ymm8,ymm5,YMMWORD PTR [rsi+rbx+32]
+        ;; vaddps  ymm6,ymm6,ymm8
+
         vandnps ymm8,ymm0,YMMWORD PTR [r8]
         vaddps  ymm1,ymm1,ymm8
         vandnps ymm8,ymm0,YMMWORD PTR [r8+32]
@@ -401,14 +438,29 @@ ProcessRowLoop4:
 ProcessColumnLoop4:
         lea     rsi,[rdx+rbx*2]             ; compute matrix B plus 2 rows
         vmovups ymm1,YMMWORD PTR [rcx]
-        vmulps  ymm6,ymm1,YMMWORD PTR [rdx]
-        vaddps  ymm2,ymm2,ymm6
-        vmulps  ymm6,ymm1,YMMWORD PTR [rdx+rbx]
-        vaddps  ymm3,ymm3,ymm6
-        vmulps  ymm6,ymm1,YMMWORD PTR [rsi]
-        vaddps  ymm4,ymm4,ymm6
-        vmulps  ymm6,ymm1,YMMWORD PTR [rsi+rbx]
-        vaddps  ymm5,ymm5,ymm6
+        ;; ymm2 = ymm2 + ymm1 * YMMWORD PTR [rdx]
+
+        vfmadd231ps ymm2, ymm1, YMMWORD PTR [rdx]
+        vfmadd231ps ymm3, ymm1, YMMWORD PTR [rdx+rbx]
+        vfmadd231ps ymm4, ymm1, YMMWORD PTR [rsi]
+        vfmadd231ps ymm5, ymm1, YMMWORD PTR [rsi+rbx]
+
+
+
+
+
+
+
+
+        ;; vmulps  ymm6,ymm1,YMMWORD PTR [rdx]
+        ;; vaddps  ymm2,ymm2,ymm6
+        ;; vmulps  ymm6,ymm1,YMMWORD PTR [rdx+rbx]
+        ;; vaddps  ymm3,ymm3,ymm6
+        ;; vmulps  ymm6,ymm1,YMMWORD PTR [rsi]
+        ;; vaddps  ymm4,ymm4,ymm6
+        ;; vmulps  ymm6,ymm1,YMMWORD PTR [rsi+rbx]
+        ;; vaddps  ymm5,ymm5,ymm6
+
         add     rcx,8*4                     ; advance matrix A by 8 columns
         add     rdx,8*4                     ; advance matrix B by 8 columns
         sub     rax,8
