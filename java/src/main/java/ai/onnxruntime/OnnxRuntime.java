@@ -37,8 +37,6 @@ final class OnnxRuntime {
 
   private static boolean loaded = false;
 
-  private static final boolean IS_ANDROID = isAndroid();
-
   /** The API handle. */
   static long ortApiHandle;
 
@@ -54,18 +52,23 @@ final class OnnxRuntime {
       detectedOS = "win";
     } else if (os.contains("nux")) {
       detectedOS = "linux";
-    } else if (IS_ANDROID) {
+    } else if (isAndroid()) {
       detectedOS = "android";
     } else {
       throw new IllegalStateException("Unsupported os:" + os);
     }
     String detectedArch = null;
     String arch = System.getProperty("os.arch", "generic").toLowerCase(Locale.ENGLISH);
-    if (arch.indexOf("amd64") == 0 || arch.indexOf("x86_64") == 0) {
+    if (arch.startsWith("amd64") || arch.startsWith("x86_64")) {
       detectedArch = "x64";
-    } else if (arch.indexOf("x86") == 0) {
+    } else if (arch.startsWith("x86")) {
+      // 32-bit x86 is not supported by the Java API
       detectedArch = "x86";
-    } else if (IS_ANDROID) {
+    } else if (arch.startsWith("aarch64")) {
+      detectedArch = "aarch64";
+    } else if (arch.startsWith("ppc64")) {
+      detectedArch = "ppc64";
+    } else if (isAndroid()) {
       detectedArch = arch;
     } else {
       throw new IllegalStateException("Unsupported arch:" + arch);
@@ -82,14 +85,14 @@ final class OnnxRuntime {
     if (loaded) {
       return;
     }
-    Path tempDirectory = IS_ANDROID ? null : Files.createTempDirectory("onnxruntime-java");
+    Path tempDirectory = isAndroid() ? null : Files.createTempDirectory("onnxruntime-java");
     try {
       load(tempDirectory, ONNXRUNTIME_LIBRARY_NAME);
       load(tempDirectory, ONNXRUNTIME_JNI_LIBRARY_NAME);
       ortApiHandle = initialiseAPIBase(ORT_API_VERSION_3);
       loaded = true;
     } finally {
-      if (!IS_ANDROID) {
+      if (!isAndroid()) {
         cleanUp(tempDirectory.toFile());
       }
     }
@@ -115,15 +118,10 @@ final class OnnxRuntime {
   /**
    * Check if we're running on Android.
    *
-   * @return True if the {@code android.app.Activity} class can be loaded, false otherwise.
+   * @return True if the property java.vendor equals The Android Project, false otherwise.
    */
   static boolean isAndroid() {
-    try {
-      Class.forName("android.app.Activity");
-      return true;
-    } catch (ClassNotFoundException e) {
-      return false;
-    }
+    return System.getProperty("java.vendor", "generic").equals("The Android Project");
   }
 
   /**
@@ -135,7 +133,7 @@ final class OnnxRuntime {
    */
   private static void load(Path tempDirectory, String library) throws IOException {
     // On Android, we simply use System.loadLibrary
-    if (IS_ANDROID) {
+    if (isAndroid()) {
       System.loadLibrary("onnxruntime4j_jni");
       return;
     }
