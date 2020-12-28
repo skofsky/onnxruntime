@@ -557,8 +557,9 @@ const float sigmoid_bound = 20.0f;
 const float tanh_bound = 10.0f;
 } // namespace constants
 
-
-void sigmoid(float* pd, int c, float alpha, float beta) {
+#pragma warning(push)
+#pragma warning(disable : 4459)
+void sigmoid(float* pd, int c, float /*alpha*/, float /*beta*/) {
   int i = 0;
   __m256 lower_bound = _mm256_set1_ps(-constants::sigmoid_bound);  // 0
   __m256 upper_bound = _mm256_set1_ps(constants::sigmoid_bound);   // 1
@@ -629,6 +630,8 @@ void sigmoid(float* pd, int c, float alpha, float beta) {
     ++i;
   }
 }
+
+#pragma warning(pop)
 
 void tanh(float* pd, int c, float alpha, float beta) {
   ORT_UNUSED_PARAMETER(alpha);
