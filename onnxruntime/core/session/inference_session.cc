@@ -55,7 +55,13 @@
 #include "core/framework/customregistry.h"
 #include "core/session/custom_ops.h"
 #endif
+
 #include <queue>
+#include "core/util/math.h"
+#include "core/util/math_cpuonly.h"
+#include "gsl/gsl"
+
+
 
 using namespace ONNX_NAMESPACE;
 using namespace onnxruntime::experimental;
@@ -63,8 +69,18 @@ using namespace onnxruntime::common;
 
 namespace onnxruntime {
 
-
 namespace {
+inline int64_t HandleNegativeAxis(int64_t axis, int64_t tensor_rank) {
+  ORT_ENFORCE(axis >= -tensor_rank && axis <= tensor_rank - 1, "axis ", axis,
+              " is not in valid range [-", tensor_rank, ",", tensor_rank - 1, "]");
+  // Handle negative axis
+  return axis < 0 ? axis + tensor_rank : axis;
+}
+
+AllocatorPtr global_allocator = std::make_shared<CPUAllocator>();
+}
+
+namespace input_concat {
 
 struct Prepare {
   struct InputInfo {
@@ -79,22 +95,6 @@ struct Prepare {
   uint64_t axis;
   bool is_string_type;
 };
-
-AllocatorPtr global_allocator = std::make_shared<CPUAllocator>();
-
-/*
-// from optimizer_execution_frame.cc
-void CreateTensor(OrtValue& ort_value, MLDataType element_type, const TensorShape* shape) {
-  // tensors
-  std::unique_ptr<Tensor> p_tensor = onnxruntime::make_unique<Tensor>(element_type,
-                                                                      *shape,
-                                                                      globalAllocator);
-
-  auto ml_tensor = DataTypeImpl::GetType<Tensor>();
-  ort_value.Init(p_tensor.release(), ml_tensor, ml_tensor->GetDeleteFunc());
-
-}
-*/
 
 class InputConcat {
  public:
@@ -118,12 +118,7 @@ class InputConcat {
   bool is_sequence_op_ = false;
 };
 
-inline int64_t HandleNegativeAxis(int64_t axis, int64_t tensor_rank) {
-  ORT_ENFORCE(axis >= -tensor_rank && axis <= tensor_rank - 1, "axis ", axis,
-              " is not in valid range [-", tensor_rank, ",", tensor_rank - 1, "]");
-  // Handle negative axis
-  return axis < 0 ? axis + tensor_rank : axis;
-}
+
 
 // this method will be shared between 'Concat' (CPU and GPU) and
 // 'ConcatFromSequence' ('concat' and 'stack' modes) to validate inputs
@@ -336,6 +331,144 @@ std::shared_ptr<OrtValue> InputConcat::Compute(std::vector<OrtValue*> input_tens
 
 }  // namespace
 
+
+namespace output_split {
+
+
+
+class Split{
+ public:
+  Split(){
+  }
+
+  std::vector<std::shared_ptr<OrtValue>> Compute(OrtValue& input);
+
+ private:
+  template <typename T>
+  std::vector<Tensor*> ComputeImpl(Tensor& input);
+
+  Status PrepareForCompute(const TensorShape& input_shape, int64_t& axis, int& before_dims,
+                           int& after_dims_including_split_axis, int& after_dims_excluding_split);
+  std::vector<Tensor*> Compute(Tensor& input);
+
+  int64_t axis_ = 0;
+  std::vector<int64_t> split_sizes_;
+  int64_t split_size_sum_ = -1;
+};
+
+std::vector<std::shared_ptr<OrtValue>> Split::Compute(OrtValue& input) {
+  std::vector<std::shared_ptr<OrtValue>> results;
+  auto tensor = input.GetMutable<Tensor>();
+  auto splits = Compute(*tensor);
+  for (int i = 0; i < splits.size(); i++) {
+    auto ml_tensor = DataTypeImpl::GetType<Tensor>();
+    results.emplace_back(std::make_shared<OrtValue>());
+    results[i]->Init(splits[i], ml_tensor, ml_tensor->GetDeleteFunc());
+  }
+
+  return results;
+}
+
+Status Split::PrepareForCompute(const TensorShape& input_shape, int64_t& axis, int& before_dims,
+                                    int& after_dims_including_split_axis, int& after_dims_excluding_split) {
+  auto& input_dims = input_shape.GetDims();
+  const auto num_dimensions = gsl::narrow_cast<int64_t>(input_shape.NumDimensions());
+  axis = HandleNegativeAxis(axis_, num_dimensions);  // handle negative and enforce axis is valid
+  const int64_t split_dim_size = input_dims[axis];
+
+  before_dims = gsl::narrow<int>(input_shape.SizeToDimension(axis));
+  after_dims_including_split_axis = gsl::narrow<int>(input_shape.SizeFromDimension(axis));
+  after_dims_excluding_split = (axis + 1 == num_dimensions)
+                                   ? 1  // we multiply by this value so must be 1 not 0
+                                   : gsl::narrow<int>(input_shape.SizeFromDimension(axis + 1));
+
+  return Status::OK();
+}
+
+std::vector<Tensor*> Split::Compute(Tensor& input) {
+
+  Status status;
+
+  if (input.IsDataType<float>())
+    return ComputeImpl<float>(input);
+  else if (input.IsDataType<int32_t>())
+    return ComputeImpl<int32_t>(input);
+  else if (input.IsDataType<int64_t>())
+    return ComputeImpl<int64_t>(input);
+  else if (input.IsDataTypeString())
+    return ComputeImpl<std::string>(input);
+  else
+    ORT_THROW("Split operator does not support ", input.DataType(), " yet");
+}
+
+template <typename T>
+inline void copy_data(const T* src, T* dst, size_t count) {
+  memcpy(dst, src, count * sizeof(T));
+}
+
+template <>
+inline void copy_data<std::string>(const std::string* src, std::string* dst, size_t count) {
+  const std::string* end = src + count;
+  std::copy(src, end, dst);
+}
+
+template <typename T>
+std::vector<Tensor*> Split::ComputeImpl(Tensor& input) {
+  auto& input_shape = input.Shape();
+  auto num_outputs = input_shape[0];
+  int64_t axis = axis_;
+  int before_dims = 0;
+  int after_dims_including_split_axis = 0;
+  int after_dims_excluding_split = 0;
+
+  
+  PrepareForCompute(input_shape,
+                                        axis,
+                                        before_dims,
+                                        after_dims_including_split_axis,
+                                        after_dims_excluding_split);
+
+  // copy dimensions so we can update the selected axis in place
+  auto& input_dims = input_shape.GetDims();
+  std::vector<int64_t> output_dimensions{input_dims};
+
+  int64_t input_offset = 0;
+  const T* input_data = input.template Data<T>();
+
+  std::vector<Tensor*> outputs;
+
+  for (int i = 0; i < num_outputs; ++i) {
+    // update size of dimension for axis we're splitting on
+
+    output_dimensions[axis] = 1; 
+
+    // yohuan: will handle pointer deletion inside OrtValue
+    outputs.emplace_back(new Tensor(input.DataType(), output_dimensions, global_allocator));
+
+    T* output_data = outputs[i]->template MutableData<T>();
+
+    math::CopyMatrix<T>(
+        before_dims,                                       // M
+        after_dims_excluding_split,           // N
+        static_cast<const T*>(input_data + input_offset),  // A
+        after_dims_including_split_axis,                   // lda
+        static_cast<T*>(output_data),                      // B
+        after_dims_excluding_split,           // ldb
+        [](const T* src, T* dst, size_t count) {
+          copy_data<T>(src, dst, count);
+        });
+
+    input_offset += after_dims_excluding_split;
+  }
+
+  return outputs;
+}
+
+
+}
+
+
+
 namespace {
 template <typename T>
 const T* GetDateFormatString();
@@ -419,7 +552,7 @@ class ThreadPoolManager {
   int m_numFreePools = 0;
   static const int DefaultThreadsPoolSize = 2;
 
-  std::queue<std::shared_ptr<BatchContext>> q;
+  std::queue<std::shared_ptr<BatchContext>> m_context_queue;
 };
 
 ThreadPoolManager::ThreadPoolManager() {
@@ -503,13 +636,18 @@ ThreadPoolManager::~ThreadPoolManager() {
 onnxruntime::concurrency::ThreadPool* ThreadPoolManager::LockThreadPool(std::shared_ptr<BatchContext> context) {
   std::unique_lock<std::mutex> lock(m_freePoolsLock);
 
-  q.push(context);
+  m_context_queue.push(context);
 
   // sleep for batch_timeout_micros
   auto batch_timeou_ms = GetEnvrionmentVarOrDefault("ONNX_Batch_Timeout_MS", 0);
   std::this_thread::sleep_for(std::chrono::milliseconds(batch_timeou_ms));
 
-  while (m_numFreePools == 0 && context->status != BatchContextStatus::processing) {
+  // yohuan: for local debug
+  //if (m_context_queue.size() < 3) {
+  //  std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+  //} 
+
+  while (context->status == BatchContextStatus::processing || (m_numFreePools == 0 && context->status == BatchContextStatus::pending)) {
     m_cv.wait(lock);
   }
 
@@ -523,18 +661,15 @@ onnxruntime::concurrency::ThreadPool* ThreadPoolManager::LockThreadPool(std::sha
 
   // Move contexts from queue to current context
   int batch_max_size = GetEnvrionmentVarOrDefault("ONNX_Batch_Max_Size", 16);
-  while (!q.empty() && context->others.size() < batch_max_size) {
-    auto c = q.front();
+  while (!m_context_queue.empty() && context->others.size() < batch_max_size) {
+    auto c = m_context_queue.front();
     if (c->status == BatchContextStatus::pending && c.get() != context.get()) {
       context->others.push_back(c);
       c->status = BatchContextStatus::processing;
     }
 
-    q.pop();
+    m_context_queue.pop();
   }
-
-  // hytodo testing
-  context->others.push_back(context);
 
   // if we get here, we should have at least one free pool
   for (int i = 0; i < m_threadPools.size(); ++i) {
@@ -550,15 +685,16 @@ onnxruntime::concurrency::ThreadPool* ThreadPoolManager::LockThreadPool(std::sha
 }
 
 void ThreadPoolManager::ReleaseThreadPool(onnxruntime::concurrency::ThreadPool* threadPool) {
-  {
+
+  if (threadPool != nullptr) {
     std::lock_guard<std::mutex> lock(m_freePoolsLock);
 
     for (int i = 0; i < m_threadPools.size(); ++i) {
-      if (m_threadPools[i].get() == threadPool) {
+        if (m_threadPools[i].get() == threadPool) {
         m_freePools[i] = true;
         m_numFreePools++;
         break;
-      }
+        }
     }
   }
 
@@ -590,20 +726,6 @@ static std::unique_ptr<ThreadPoolManager> threadPoolManager;
 
 
 }  // namespace
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 std::atomic<uint32_t> InferenceSession::global_session_id_{1};
@@ -1975,7 +2097,7 @@ common::Status InferenceSession::ValidateOutputs(const std::vector<std::string>&
 }
 
 void MergeInput(std::shared_ptr<BatchContext> batch_context, std::vector<OrtValue>& merged_input) {
-    auto concat = InputConcat();
+    auto concat = input_concat::InputConcat();
     auto first = batch_context->input;
     for (int i = 0; i < first->size(); i++) {
       std::vector<OrtValue*> merging;
@@ -1993,6 +2115,26 @@ void MergeInput(std::shared_ptr<BatchContext> batch_context, std::vector<OrtValu
     }
 }
 
+void SplitOutput(std::vector<OrtValue>* merged_output, std::shared_ptr<BatchContext> batch_context) {
+  auto split_op = output_split::Split();
+
+  for (int i = 0; i < merged_output->size(); i++) {
+    auto splits = split_op.Compute(merged_output->at(i));
+
+    merged_output->at(i) = *(splits[0]);
+    for (size_t j = 0; j < batch_context->others.size(); j++) {
+      batch_context->others[j]->output->at(i) = *(splits[j + 1]);
+    }
+    
+    splits.clear();
+  }
+
+  for (int i = 0; i < batch_context->others.size(); i++) {
+    batch_context->others[i]->status = BatchContextStatus::finished;
+  }
+  //batch_context->others.clear();
+}
+
 Status InferenceSession::Run(const RunOptions& run_options,
                              const std::vector<std::string>& feed_names, const std::vector<OrtValue>& feeds,
                              const std::vector<std::string>& output_names, std::vector<OrtValue>* p_fetches,
@@ -2001,6 +2143,18 @@ Status InferenceSession::Run(const RunOptions& run_options,
   // lock the thread pool
   auto batch_context = std::make_shared<BatchContext>(&feeds, p_fetches, BatchContextStatus::pending);
   ThreadPoolLock lock(*threadPoolManager, batch_context);
+
+  Status retval = Status::OK();
+
+  if (batch_context->status == BatchContextStatus::finished) {
+    for (int i = 0; i < p_fetches->size(); i++) {
+      p_fetches->at(i) = batch_context->output->at(i);
+      
+      // hytodo
+      auto ss = p_fetches->at(i).GetMutable<Tensor>()->Shape();
+    }
+    return retval;
+  }
 
   if (session_profiler_.IsEnabled()) {
     tp = session_profiler_.StartTime();
@@ -2020,7 +2174,7 @@ Status InferenceSession::Run(const RunOptions& run_options,
   ortrun_activity.SetRelatedActivity(session_activity);
   TraceLoggingWriteStart(ortrun_activity, "OrtRun");
 #endif
-  Status retval = Status::OK();
+  
   const Env& env = Env::Default();
 
   std::vector<IExecutionProvider*> exec_providers_to_stop;
@@ -2091,6 +2245,7 @@ Status InferenceSession::Run(const RunOptions& run_options,
                                                  run_options.only_execute_path_to_fetches));
   }
   ORT_CATCH(const std::exception& e) {
+    //yohuan_todo handle error for batching request
     ORT_HANDLE_EXCEPTION([&]() {
       retval = Status(common::ONNXRUNTIME, common::FAIL, e.what());
     });
@@ -2104,6 +2259,11 @@ Status InferenceSession::Run(const RunOptions& run_options,
     auto status = xp->OnRunEnd();
     ORT_CHECK_AND_SET_RETVAL(status);
   }
+
+  if (batch_context->others.size() > 0) {
+    SplitOutput(p_fetches, batch_context);
+  }
+  batch_context->status = BatchContextStatus::finished;
 
   --current_num_runs_;
 
