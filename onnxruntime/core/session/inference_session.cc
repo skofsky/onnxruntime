@@ -660,8 +660,8 @@ onnxruntime::concurrency::ThreadPool* ThreadPoolManager::LockThreadPool(std::sha
 
 
   // Move contexts from queue to current context
-  int batch_max_size = GetEnvrionmentVarOrDefault("ONNX_Batch_Max_Size", 16);
-  while (!m_context_queue.empty() && context->others.size() < batch_max_size) {
+  size_t batch_max_size = GetEnvrionmentVarOrDefault("ONNX_Batch_Max_Size", 16);
+  while (!m_context_queue.empty() && context->others.size() < batch_max_size - 1) {
     auto c = m_context_queue.front();
     if (c->status == BatchContextStatus::pending && c.get() != context.get()) {
       context->others.push_back(c);
@@ -2149,9 +2149,6 @@ Status InferenceSession::Run(const RunOptions& run_options,
   if (batch_context->status == BatchContextStatus::finished) {
     for (int i = 0; i < p_fetches->size(); i++) {
       p_fetches->at(i) = batch_context->output->at(i);
-      
-      // hytodo
-      auto ss = p_fetches->at(i).GetMutable<Tensor>()->Shape();
     }
     return retval;
   }
