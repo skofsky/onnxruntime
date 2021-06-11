@@ -38,7 +38,7 @@ Status ParallelExecutor::Execute(const SessionState& session_state, concurrency:
     tp = session_state.Profiler().StartTime();
   }
 
-  root_frame_ = onnxruntime::make_unique<ExecutionFrame>(feed_mlvalue_idxs, feeds, fetch_mlvalue_idxs, fetches,
+  root_frame_ = std::make_unique<ExecutionFrame>(feed_mlvalue_idxs, feeds, fetch_mlvalue_idxs, fetches,
                                                          fetch_allocators, session_state);
   //std::cout << "start nodes:" << std::endl;
   for (auto node_index : session_state.GetGraphViewer().GetRootNodes()) {
@@ -94,7 +94,7 @@ Status ParallelExecutor::Execute(const SessionState& session_state, concurrency:
     }
 
     if (all_tensors) {
-      auto mem_patterns = onnxruntime::make_unique<MemoryPatternGroup>();
+      auto mem_patterns = std::make_unique<MemoryPatternGroup>();
       ORT_RETURN_IF_ERROR(root_frame_->GeneratePatterns(mem_patterns.get()));
       ORT_RETURN_IF_ERROR(session_state.UpdateMemoryPatternGroupCache(input_shapes, std::move(mem_patterns)));
     }
@@ -183,7 +183,7 @@ Status ParallelExecutor::RunNodeAsync(size_t p_node_index,
                                                      node.Name() + "_fence_before",
                                                      sync_time_begin,
                                                      {{"op_name", p_op_kernel->KernelDef().OpName()}});
-
+      concurrency::ThreadPool::StartProfiling(session_state.GetThreadPool());
       kernel_begin_time = session_state.Profiler().StartTime();
     }
 
@@ -193,8 +193,9 @@ Status ParallelExecutor::RunNodeAsync(size_t p_node_index,
     // Execute the kernel.
     ORT_TRY {
 #ifdef ENABLE_TRAINING
-      if (p_op_kernel->KernelDef().AllocateInputsContiguously())
-        utils::VerifyInputTensorsAllocatedContiguously(&op_kernel_context);
+      if (p_op_kernel->KernelDef().AllocateInputsContiguously()) {
+        ORT_RETURN_IF_ERROR(utils::VerifyInputTensorsAllocatedContiguously(&op_kernel_context));
+      }
 #endif
 
       status = p_op_kernel->Compute(&op_kernel_context);
@@ -219,7 +220,9 @@ Status ParallelExecutor::RunNodeAsync(size_t p_node_index,
       session_state.Profiler().EndTimeAndRecordEvent(profiling::NODE_EVENT,
                                                      node.Name() + "_kernel_time",
                                                      kernel_begin_time,
-                                                     {{"op_name", p_op_kernel->KernelDef().OpName()}, {"provider", p_op_kernel->KernelDef().Provider()}});
+                                                     {{"op_name", p_op_kernel->KernelDef().OpName()},
+                                                      {"provider", p_op_kernel->KernelDef().Provider()},
+                                                      {"thread_scheduling_stats", concurrency::ThreadPool::StopProfiling(session_state.GetThreadPool())}});
 
       sync_time_begin = session_state.Profiler().StartTime();
     }

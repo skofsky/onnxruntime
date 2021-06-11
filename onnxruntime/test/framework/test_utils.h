@@ -13,13 +13,19 @@
 #include "gsl/gsl"
 
 #ifdef USE_CUDA
-#include "core/providers/cuda/cuda_execution_provider.h"
+#include "core/providers/providers.h"
+#endif
+#ifdef USE_ROCM
+#include "core/providers/rocm/rocm_execution_provider.h"
 #endif
 #ifdef USE_NNAPI
 #include "core/providers/nnapi/nnapi_builtin/nnapi_execution_provider.h"
 #endif
 #ifdef USE_RKNPU
 #include "core/providers/rknpu/rknpu_execution_provider.h"
+#endif
+#ifdef USE_COREML
+#include "core/providers/coreml/coreml_execution_provider.h"
 #endif
 
 namespace onnxruntime {
@@ -29,26 +35,19 @@ namespace test {
 // Doesn't work with ExecutionProviders class and KernelRegistryManager
 IExecutionProvider* TestCPUExecutionProvider();
 
-#ifdef USE_CUDA
-// Doesn't work with ExecutionProviders class and KernelRegistryManager
-IExecutionProvider* TestCudaExecutionProvider();
+#ifdef USE_ROCM
+IExecutionProvider* TestRocmExecutionProvider();
 #endif
-
-#ifdef USE_TENSORRT
-// Doesn't work with ExecutionProviders class and KernelRegistryManager
-IExecutionProvider* TestTensorrtExecutionProvider();
-#endif
-
-#ifdef USE_OPENVINO
-IExecutionProvider* TestOpenVINOExecutionProvider();
-#endif
-
 #ifdef USE_NNAPI
 IExecutionProvider* TestNnapiExecutionProvider();
 #endif
 
 #ifdef USE_RKNPU
 IExecutionProvider* TestRknpuExecutionProvider();
+#endif
+
+#ifdef USE_COREML
+IExecutionProvider* TestCoreMLExecutionProvider(uint32_t coreml_flags);
 #endif
 
 template <typename T>
@@ -70,7 +69,7 @@ void CreateMLValue(AllocatorPtr alloc, const std::vector<int64_t>& dims, const s
                    OrtValue* p_mlvalue) {
   TensorShape shape(dims);
   auto element_type = DataTypeImpl::GetType<T>();
-  std::unique_ptr<Tensor> p_tensor = onnxruntime::make_unique<Tensor>(element_type,
+  std::unique_ptr<Tensor> p_tensor = std::make_unique<Tensor>(element_type,
                                                                       shape,
                                                                       alloc);
   if (value.size() > 0) {
@@ -88,7 +87,7 @@ void CreateMLValue(const std::vector<int64_t>& dims, T* data_buffer, const OrtMe
                    OrtValue* p_mlvalue) {
   TensorShape shape(dims);
   auto element_type = DataTypeImpl::GetType<T>();
-  std::unique_ptr<Tensor> p_tensor = onnxruntime::make_unique<Tensor>(element_type,
+  std::unique_ptr<Tensor> p_tensor = std::make_unique<Tensor>(element_type,
                                                                       shape,
                                                                       data_buffer,
                                                                       info);
@@ -101,7 +100,7 @@ template <typename T>
 void AllocateMLValue(AllocatorPtr alloc, const std::vector<int64_t>& dims, OrtValue* p_mlvalue) {
   TensorShape shape(dims);
   auto element_type = DataTypeImpl::GetType<T>();
-  std::unique_ptr<Tensor> p_tensor = onnxruntime::make_unique<Tensor>(element_type,
+  std::unique_ptr<Tensor> p_tensor = std::make_unique<Tensor>(element_type,
                                                                       shape,
                                                                       alloc);
   p_mlvalue->Init(p_tensor.release(),

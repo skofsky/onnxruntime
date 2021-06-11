@@ -68,10 +68,10 @@ static void CalculateTotalOutputSizes(OpKernelContextInternal* op_kernel_context
 #if defined(TRACE_EXECUTION)
       const TensorShape& tensor_shape = tensor.Shape();
       std::cout << node_name << " output[" << i << "]"
-                << " size=" << tensor_size
-                << " shape=" << tensor_shape.ToString()
-                << " element_size=" << tensor.DataType()->Size()
-                << "\n";
+                         << " size=" << tensor_size
+                         << " shape=" << tensor_shape.ToString()
+                         << " element_size=" << tensor.DataType()->Size()
+                         << "\n";
 #endif
       total_output_sizes += tensor_size;
     }
@@ -101,12 +101,12 @@ static void CalculateTotalInputSizes(const OpKernelContextInternal* op_kernel_co
 #if defined(TRACE_EXECUTION)
       const TensorShape& tensor_shape = p_tensor->Shape();
       size_t element_size = p_tensor->DataType()->Size();
-      std::cout << node_name << " input[" << i << "]"
-                << " is_param=" << is_param
-                << " size=" << tensor_size
-                << " shape=" << tensor_shape.ToString()
-                << " element_size=" << element_size
-                << "\n";
+      LOGS(logger, INFO) << node_name << " input[" << i << "]"
+                         << " is_param=" << is_param
+                         << " size=" << tensor_size
+                         << " shape=" << tensor_shape.ToString()
+                         << " element_size=" << element_size
+                         << "\n";
 #endif
       if (is_param) {
         input_parameter_sizes += tensor_size;
@@ -285,7 +285,7 @@ Status SequentialExecutor::Execute(const SessionState& session_state, concurrenc
                                                      node_name_for_profiling + "_fence_before",
                                                      sync_time_begin,
                                                      {{"op_name", p_op_kernel->KernelDef().OpName()}});
-
+      concurrency::ThreadPool::StartProfiling(session_state.GetThreadPool());
       // call compute on the kernel
       VLOGS(logger, 1) << "Computing kernel: " << node_name_for_profiling;
 
@@ -303,13 +303,14 @@ Status SequentialExecutor::Execute(const SessionState& session_state, concurrenc
 #endif
 #ifdef ENABLE_NVTX_PROFILE
       profile::NvtxRangeCreator node_compute_range(
-          MakeString(node.OpType(), ".", node.Index(), "(", node.Name(), ")"), profile::Color::Blue);
+          MakeString(node.OpType(), ".", node.Index(), "(", node.Name(), ")"), profile::Color::Yellow);
       node_compute_range.Begin();
 #endif
       ORT_TRY {
 #ifdef ENABLE_TRAINING
-        if (p_op_kernel->KernelDef().AllocateInputsContiguously())
-          utils::VerifyInputTensorsAllocatedContiguously(&op_kernel_context);
+        if (p_op_kernel->KernelDef().AllocateInputsContiguously()) {
+          ORT_RETURN_IF_ERROR(utils::VerifyInputTensorsAllocatedContiguously(&op_kernel_context));
+        }
 #endif
 
         compute_status = p_op_kernel->Compute(&op_kernel_context);
@@ -329,6 +330,11 @@ Status SequentialExecutor::Execute(const SessionState& session_state, concurrenc
       std::ostringstream ss;
       ss << "Non-zero status code returned while running " << node.OpType() << " node. Name:'" << node.Name()
          << "' Status Message: " << compute_status.ErrorMessage();
+      //If the computation failed, we still can record the memory consumption
+#if !defined(ORT_MINIMAL_BUILD) && defined(ORT_MEMORY_PROFILE)
+      MemoryInfo::MemoryInfoProfile::CreateEvents("dynamic activations_" + std::to_string(MemoryInfo::GetIteration()),
+                                                  MemoryInfo::MemoryInfoProfile::GetAndIncreasePid(), MemoryInfo::MapType::DynamicActivation, "", 0);
+#endif
       const auto msg_string = ss.str();
       LOGS(logger, ERROR) << msg_string;
       return Status(compute_status.Category(), compute_status.Code(), msg_string);
@@ -363,8 +369,8 @@ Status SequentialExecutor::Execute(const SessionState& session_state, concurrenc
                                                          {"activation_size", std::to_string(input_activation_sizes)},
                                                          {"parameter_size", std::to_string(input_parameter_sizes)},
                                                          {"output_size", std::to_string(total_output_sizes)},
+                                                         {"thread_scheduling_stats", concurrency::ThreadPool::StopProfiling(session_state.GetThreadPool())},
                                                      });
-
       sync_time_begin = session_state.Profiler().StartTime();
     }
 
@@ -442,6 +448,12 @@ Status SequentialExecutor::Execute(const SessionState& session_state, concurrenc
   ORT_RETURN_IF_ERROR(frame.GetOutputs(fetches));
   VLOGS(logger, 1) << "Done with execution.";
 
+#if !defined(ORT_MINIMAL_BUILD) && defined(ORT_MEMORY_PROFILE)
+  MemoryInfo::MemoryInfoProfile::CreateEvents("dynamic activations_" + std::to_string(MemoryInfo::GetIteration()),
+                                              MemoryInfo::MemoryInfoProfile::GetAndIncreasePid(), MemoryInfo::MapType::DynamicActivation, "", 0);
+  MemoryInfo::MemoryInfoProfile::Clear();
+#endif
+
   if (frame.HasMemoryPatternPlanner()) {
     std::vector<std::reference_wrapper<const TensorShape>> input_shapes;
     bool all_tensors = true;
@@ -455,7 +467,7 @@ Status SequentialExecutor::Execute(const SessionState& session_state, concurrenc
     }
 
     if (all_tensors) {
-      auto mem_patterns = onnxruntime::make_unique<MemoryPatternGroup>();
+      auto mem_patterns = std::make_unique<MemoryPatternGroup>();
       ORT_RETURN_IF_ERROR(frame.GeneratePatterns(mem_patterns.get()));
       ORT_RETURN_IF_ERROR(session_state.UpdateMemoryPatternGroupCache(input_shapes, std::move(mem_patterns)));
     }

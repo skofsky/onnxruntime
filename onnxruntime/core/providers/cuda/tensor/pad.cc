@@ -4,7 +4,6 @@
 #include "pad.h"
 #include "pad_impl.h"
 #include "core/providers/cpu/tensor/utils.h"
-#include "core/providers/cpu/tensor/pad.h"
 
 namespace onnxruntime {
 namespace cuda {
@@ -16,18 +15,29 @@ namespace cuda {
       2, 10,                                                      \
       T,                                                          \
       kCudaExecutionProvider,                                     \
-      KernelDefBuilder()                                          \
+      (*KernelDefBuilder::Create())                               \
+          .TypeConstraint("T", DataTypeImpl::GetTensorType<T>()), \
+      Pad<T>);                                                    \
+  ONNX_OPERATOR_VERSIONED_TYPED_KERNEL_EX(                        \
+      Pad,                                                        \
+      kOnnxDomain,                                                \
+      11, 12,                                                     \
+      T,                                                          \
+      kCudaExecutionProvider,                                     \
+      (*KernelDefBuilder::Create())                               \
+          .InputMemoryType(OrtMemTypeCPUInput, 1)                 \
+          .InputMemoryType(OrtMemTypeCPUInput, 2)                 \
           .TypeConstraint("T", DataTypeImpl::GetTensorType<T>()), \
       Pad<T>);                                                    \
   ONNX_OPERATOR_TYPED_KERNEL_EX(                                  \
       Pad,                                                        \
       kOnnxDomain,                                                \
-      11,                                                         \
+      13,                                                         \
       T,                                                          \
       kCudaExecutionProvider,                                     \
-      KernelDefBuilder()                                          \
-          .InputMemoryType<OrtMemTypeCPUInput>(1)                 \
-          .InputMemoryType<OrtMemTypeCPUInput>(2)                 \
+      (*KernelDefBuilder::Create())                               \
+          .InputMemoryType(OrtMemTypeCPUInput, 1)                 \
+          .InputMemoryType(OrtMemTypeCPUInput, 2)                 \
           .TypeConstraint("T", DataTypeImpl::GetTensorType<T>()), \
       Pad<T>);
 
@@ -81,7 +91,7 @@ Status Pad<T>::ComputeInternal(OpKernelContext* ctx) const {
       }
     }
 
-    T raw_value(0);
+    T raw_value{};
     const Tensor* value_tensor = ctx->Input<Tensor>(2);
     if (nullptr != value_tensor) {
       ORT_ENFORCE(utils::IsPrimitiveDataType<T>(value_tensor->DataType()) &&
@@ -123,7 +133,7 @@ Status Pad<T>::ComputeInternal(OpKernelContext* ctx) const {
     CUDA_RETURN_IF_ERROR(cudaMemcpyAsync(
         output_tensor.template MutableData<T>(), input_tensor.template Data<T>(),
         sizeof(typename ToCudaType<T>::MappedType) * output_shape.Size(),
-        cudaMemcpyDeviceToDevice, 0));
+        cudaMemcpyDeviceToDevice, Stream()));
     return Status::OK();
   }
 
@@ -134,6 +144,7 @@ Status Pad<T>::ComputeInternal(OpKernelContext* ctx) const {
   }
 
   PadImpl(
+      Stream(),
       dimension_count,
       input_dims,
       input_strides,

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2019, 2020, Oracle and/or its affiliates. All rights reserved.
  * Licensed under the MIT License.
  */
 package ai.onnxruntime;
@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.EnumSet;
 import java.util.Locale;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -27,11 +28,18 @@ final class OnnxRuntime {
   private static final int ORT_API_VERSION_2 = 2;
   // Post 1.3 builds of the ORT API
   private static final int ORT_API_VERSION_3 = 3;
+  // Post 1.6 builds of the ORT API
+  private static final int ORT_API_VERSION_7 = 7;
 
   /** The short name of the ONNX runtime shared library */
   static final String ONNXRUNTIME_LIBRARY_NAME = "onnxruntime";
   /** The short name of the ONNX runtime JNI shared library */
   static final String ONNXRUNTIME_JNI_LIBRARY_NAME = "onnxruntime4j_jni";
+
+  /** The short name of the ONNX runtime shared provider library */
+  static final String ONNXRUNTIME_LIBRARY_SHARED_NAME = "onnxruntime_providers_shared";
+  /** The short name of the ONNX runtime cuda provider library */
+  static final String ONNXRUNTIME_LIBRARY_CUDA_NAME = "onnxruntime_providers_cuda";
 
   private static final String OS_ARCH_STR = initOsArch();
 
@@ -39,6 +47,9 @@ final class OnnxRuntime {
 
   /** The API handle. */
   static long ortApiHandle;
+
+  /** The available runtime providers */
+  static EnumSet<OrtProvider> providers;
 
   private OnnxRuntime() {}
 
@@ -87,13 +98,19 @@ final class OnnxRuntime {
     }
     Path tempDirectory = isAndroid() ? null : Files.createTempDirectory("onnxruntime-java");
     try {
-      load(tempDirectory, ONNXRUNTIME_LIBRARY_NAME);
-      load(tempDirectory, ONNXRUNTIME_JNI_LIBRARY_NAME);
-      ortApiHandle = initialiseAPIBase(ORT_API_VERSION_3);
+      // Extract and prepare the shared provider libraries but don't try to load them, Onnxruntime
+      // itself will load them
+      load(tempDirectory, ONNXRUNTIME_LIBRARY_SHARED_NAME, false);
+      load(tempDirectory, ONNXRUNTIME_LIBRARY_CUDA_NAME, false);
+
+      load(tempDirectory, ONNXRUNTIME_LIBRARY_NAME, true);
+      load(tempDirectory, ONNXRUNTIME_JNI_LIBRARY_NAME, true);
+      ortApiHandle = initialiseAPIBase(ORT_API_VERSION_7);
+      providers = initialiseProviders(ortApiHandle);
       loaded = true;
     } finally {
-      if (!isAndroid()) {
-        cleanUp(tempDirectory.toFile());
+      if (tempDirectory != null) {
+        cleanUp(tempDirectory.toFile(), false);
       }
     }
   }
@@ -103,13 +120,14 @@ final class OnnxRuntime {
    * in time.
    *
    * @param file The file to remove.
+   * @param onExitOnly Delete the file on exit only, vs trying to do it immediately
    */
-  private static void cleanUp(File file) {
+  private static void cleanUp(File file, boolean onExitOnly) {
     if (!file.exists()) {
       return;
     }
     logger.log(Level.FINE, "Deleting " + file);
-    if (!file.delete()) {
+    if (onExitOnly || !file.delete()) {
       logger.log(Level.FINE, "Deleting " + file + " on exit");
       file.deleteOnExit();
     }
@@ -129,9 +147,11 @@ final class OnnxRuntime {
    *
    * @param tempDirectory The temp directory to write the library resource to.
    * @param library The bare name of the library.
+   * @param systemLoad If system.Load(..) should be called on the library vs just preparing it
    * @throws IOException If the file failed to read or write.
    */
-  private static void load(Path tempDirectory, String library) throws IOException {
+  private static void load(Path tempDirectory, String library, boolean systemLoad)
+      throws IOException {
     // On Android, we simply use System.loadLibrary
     if (isAndroid()) {
       System.loadLibrary("onnxruntime4j_jni");
@@ -173,6 +193,9 @@ final class OnnxRuntime {
     try (InputStream is = OnnxRuntime.class.getResourceAsStream(resourcePath)) {
       if (is == null) {
         // 3a) Not found in resources, load from library path
+        if (!systemLoad) {
+          return; // Failure is expected for optional components we don't need to load
+        }
         logger.log(
             Level.FINE, "Attempting to load native library '" + library + "' from library path");
         System.loadLibrary(library);
@@ -194,12 +217,38 @@ final class OnnxRuntime {
             os.write(buffer, 0, readBytes);
           }
         }
-        System.load(tempFile.getAbsolutePath());
-        logger.log(Level.FINE, "Loaded native library '" + library + "' from resource path");
+        if (systemLoad) {
+          System.load(tempFile.getAbsolutePath());
+          logger.log(Level.FINE, "Loaded native library '" + library + "' from resource path");
+        } else {
+          logger.log(Level.FINE, "Extracted native library '" + library + "' from resource path");
+        }
       }
     } finally {
-      cleanUp(tempFile);
+      cleanUp(tempFile, !systemLoad);
     }
+  }
+
+  /**
+   * Extracts the providers array from the C API, converts it into an EnumSet.
+   *
+   * <p>Throws IllegalArgumentException if a provider isn't recognised (note this exception should
+   * only happen during development of ONNX Runtime, if it happens at any other point, file an issue
+   * on Github).
+   *
+   * @param ortApiHandle The API Handle.
+   * @return The enum set.
+   */
+  private static EnumSet<OrtProvider> initialiseProviders(long ortApiHandle) {
+    String[] providersArray = getAvailableProviders(ortApiHandle);
+
+    EnumSet<OrtProvider> providers = EnumSet.noneOf(OrtProvider.class);
+
+    for (String provider : providersArray) {
+      providers.add(OrtProvider.mapFromName(provider));
+    }
+
+    return providers;
   }
 
   /**
@@ -209,4 +258,12 @@ final class OnnxRuntime {
    * @return A pointer to the API struct.
    */
   private static native long initialiseAPIBase(int apiVersionNumber);
+
+  /**
+   * Gets the array of available providers.
+   *
+   * @param ortApiHandle The API handle
+   * @return The array of providers
+   */
+  private static native String[] getAvailableProviders(long ortApiHandle);
 }

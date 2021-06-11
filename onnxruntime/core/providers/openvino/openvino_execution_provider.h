@@ -6,6 +6,7 @@
 #include "backend_manager.h"
 #include <map>
 #include <algorithm>
+#include <iostream>
 
 namespace onnxruntime {
 
@@ -55,9 +56,11 @@ struct OpenVINOExecutionProviderInfo {
   bool enable_vpu_fast_compile_;
   std::string device_id_;
   size_t num_of_threads_;
+  bool use_compiled_network_;
+  std::string blob_dump_path_;
 
-  explicit OpenVINOExecutionProviderInfo(std::string dev_type, bool enable_vpu_fast_compile, std::string dev_id, size_t num_of_threads)
-      : enable_vpu_fast_compile_(enable_vpu_fast_compile), device_id_(dev_id), num_of_threads_(num_of_threads) {
+  explicit OpenVINOExecutionProviderInfo(std::string dev_type, bool enable_vpu_fast_compile, std::string dev_id, size_t num_of_threads, bool use_compiled_network, std::string blob_dump_path)
+      : enable_vpu_fast_compile_(enable_vpu_fast_compile), device_id_(dev_id), num_of_threads_(num_of_threads), use_compiled_network_(use_compiled_network), blob_dump_path_(blob_dump_path) {
     if (dev_type == "") {
       LOGS_DEFAULT(INFO) << "[OpenVINO-EP]"
                          << "No runtime device selection option provided.";
@@ -125,7 +128,7 @@ struct OpenVINOExecutionProviderInfo {
                        << "Choosing Device: " << device_type_ << " , Precision: " << precision_;
   }
   OpenVINOExecutionProviderInfo() {
-    OpenVINOExecutionProviderInfo("", false, "", 0);
+    OpenVINOExecutionProviderInfo("", false, "", 0, false,"");
   }
 };
 
@@ -137,17 +140,17 @@ struct OpenVINOEPFunctionState {
 };
 
 // Logical device representation.
-class OpenVINOExecutionProvider : public Provider_IExecutionProvider {
+class OpenVINOExecutionProvider : public IExecutionProvider {
  public:
   explicit OpenVINOExecutionProvider(const OpenVINOExecutionProviderInfo& info);
   ~OpenVINOExecutionProvider() = default;
 
-  std::vector<std::unique_ptr<Provider_ComputeCapability>>
-  Provider_GetCapability(const onnxruntime::Provider_GraphViewer& graph_viewer,
-                         const std::vector<const Provider_KernelRegistry*>& kernel_registries) const override;
+  std::vector<std::unique_ptr<ComputeCapability>>
+  GetCapability(const GraphViewer& graph_viewer,
+                const std::vector<const KernelRegistry*>& kernel_registries) const override;
 
-  Status Provider_Compile(const std::vector<onnxruntime::Provider_Node*>& fused_nodes,
-                          std::vector<NodeComputeInfo>& node_compute_funcs) override;
+  Status Compile(const std::vector<onnxruntime::Node*>& fused_nodes,
+                 std::vector<NodeComputeInfo>& node_compute_funcs) override;
 
   const void* GetExecutionHandle() const noexcept override {
     return nullptr;

@@ -26,7 +26,7 @@ void BackendManager::ReleaseGlobalContext() {
   g_global_context.reset();
 }
 
-BackendManager::BackendManager(const Provider_Node* fused_node, const logging::Logger& logger) {
+BackendManager::BackendManager(const Node* fused_node, const logging::Logger& logger) {
   auto prec_str = GetGlobalContext().precision_str;
   if (prec_str == "FP32") {
     subgraph_context_.precision = InferenceEngine::Precision::FP32;
@@ -92,7 +92,7 @@ BackendManager::BackendManager(const Provider_Node* fused_node, const logging::L
   }
 }
 
-bool BackendManager::ModelHasBatchedInputs(const ONNX_NAMESPACE::Provider_ModelProto& model_proto) const {
+bool BackendManager::ModelHasBatchedInputs(const ONNX_NAMESPACE::ModelProto& model_proto) const {
   bool has_batched_inputs = true;
 
   for (int i = 0; i < (int)subgraph_context_.input_indexes.size(); i++) {
@@ -123,7 +123,7 @@ bool BackendManager::ModelHasBatchedInputs(const ONNX_NAMESPACE::Provider_ModelP
   return has_batched_inputs;
 }
 
-bool BackendManager::ModelHasSymbolicInputDims(const onnxruntime::Provider_Node* fused_node) const {
+bool BackendManager::ModelHasSymbolicInputDims(const onnxruntime::Node* fused_node) const {
   bool has_sym_dims = false;
   auto graph_inputs = fused_node->GetFunctionBody()->Body().GetInputs();
   for (auto input : graph_inputs) {
@@ -144,14 +144,14 @@ bool BackendManager::ModelHasSymbolicInputDims(const onnxruntime::Provider_Node*
   return has_sym_dims;
 }
 
-std::unique_ptr<ONNX_NAMESPACE::Provider_ModelProto>
-BackendManager::GetModelProtoFromFusedNode(const onnxruntime::Provider_Node* fused_node,
+std::unique_ptr<ONNX_NAMESPACE::ModelProto>
+BackendManager::GetModelProtoFromFusedNode(const onnxruntime::Node* fused_node,
                                            const logging::Logger& logger) const {
   const auto* node_function = fused_node->GetFunctionBody();
   const std::string& name = fused_node->Name();
   ORT_ENFORCE(node_function != nullptr, "Could not extract function body for node: ", name);
 
-  const onnxruntime::Provider_Graph& node_subgraph = node_function->Body();
+  const onnxruntime::Graph& node_subgraph = node_function->Body();
   auto model = node_subgraph.CreateGraphViewer()->CreateModel(logger);
 
   auto model_proto = model->ToProto();
@@ -199,10 +199,10 @@ std::string MakeMapKeyString(std::vector<std::vector<int64_t>>& shapes,
   return key;
 }
 
-std::shared_ptr<ONNX_NAMESPACE::Provider_ModelProto>
-BackendManager::ReWriteInputShapeInfo(const ONNX_NAMESPACE::Provider_ModelProto& model_proto,
+std::shared_ptr<ONNX_NAMESPACE::ModelProto>
+BackendManager::ReWriteInputShapeInfo(const ONNX_NAMESPACE::ModelProto& model_proto,
                                       std::vector<std::vector<int64_t>> input_shapes) {
-  auto model_copy = std::shared_ptr<Provider_ModelProto>(Provider_ModelProto::Create());
+  auto model_copy = std::shared_ptr<ONNX_NAMESPACE::ModelProto>(ONNX_NAMESPACE::ModelProto::Create());
   std::string proto_str;
   model_proto.SerializeToString(proto_str);
   model_copy->ParseFromString(proto_str);
@@ -219,16 +219,16 @@ BackendManager::ReWriteInputShapeInfo(const ONNX_NAMESPACE::Provider_ModelProto&
   return model_copy;
 }
 
-std::shared_ptr<ONNX_NAMESPACE::Provider_ModelProto>
-BackendManager::ReWriteBatchDimWithOne(const ONNX_NAMESPACE::Provider_ModelProto& model_proto) {
-  auto model_copy = std::shared_ptr<Provider_ModelProto>(Provider_ModelProto::Create());
+std::shared_ptr<ONNX_NAMESPACE::ModelProto>
+BackendManager::ReWriteBatchDimWithOne(const ONNX_NAMESPACE::ModelProto& model_proto) {
+  auto model_copy = std::shared_ptr<ONNX_NAMESPACE::ModelProto>(ONNX_NAMESPACE::ModelProto::Create());
   std::string proto_str;
   model_proto.SerializeToString(proto_str);
   model_copy->ParseFromString(proto_str);
   auto graph_proto = model_copy->mutable_graph();
 
   for (int i = 0; i < graph_proto->input_size(); i++) {
-    ONNX_NAMESPACE::Provider_TensorShapeProto* g_in_shape = graph_proto->mutable_input((int)i)->mutable_type()->mutable_tensor_type()->mutable_shape();
+    ONNX_NAMESPACE::TensorShapeProto* g_in_shape = graph_proto->mutable_input((int)i)->mutable_type()->mutable_tensor_type()->mutable_shape();
     g_in_shape->mutable_dim(0)->clear_dim_value();
     g_in_shape->mutable_dim(0)->set_dim_value(1);
   }

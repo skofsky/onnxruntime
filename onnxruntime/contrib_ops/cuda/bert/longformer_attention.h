@@ -4,8 +4,7 @@
 #pragma once
 
 #include "core/common/common.h"
-#include "core/framework/op_kernel.h"
-#include "core/providers/cuda/cuda_common.h"
+#include "core/providers/cuda/cuda_kernel.h"
 #include "contrib_ops/cpu/bert/longformer_attention_base.h"
 
 namespace onnxruntime {
@@ -19,6 +18,9 @@ class LongformerAttention final : public CudaKernel, public LongformerAttentionB
  public:
   LongformerAttention(const OpKernelInfo& info);
   Status ComputeInternal(OpKernelContext* context) const override;
+
+ private:
+  bool use_compact_memory_;
 };
 
 }  // namespace cuda

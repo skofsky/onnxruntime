@@ -3,8 +3,6 @@
 
 #include "orttraining/training_ops/cuda/controlflow/wait.h"
 #include "core/providers/cpu/tensor/utils.h"
-// Include RecordEvent's utility functions shared by CPU and GPU implementations.
-#include "orttraining/training_ops/cpu/controlflow/common.h"
 // Include event mechanism shared by CPU and GPU implementations.
 #include "orttraining/training_ops/cpu/controlflow/event_pool.h"
 #include "orttraining/training_ops/cpu/controlflow/wait.h"
@@ -19,11 +17,11 @@ ONNX_OPERATOR_KERNEL_EX(
     kMSDomain,
     1,
     kCudaExecutionProvider,
-    KernelDefBuilder()
-        .InputMemoryType<OrtMemTypeCPUInput>(0)   /* CPU variable */
+    (*KernelDefBuilder::Create())
+        .InputMemoryType(OrtMemTypeCPUInput, 0) /* CPU variable */
         .TypeConstraint("TInt64", DataTypeImpl::GetTensorType<int64_t>())
         .TypeConstraint("T", DataTypeImpl::AllFixedSizeTensorTypes())
-        .Alias(onnxruntime::contrib::AliasRange<1, 0>(0, 1024)),
+        .VariadicAlias(1, 0),  // outputs and inputs are mapped one to one, with input offset by 1
     WaitEvent);
 
 Status WaitEvent::ComputeInternal(OpKernelContext* ctx) const {
@@ -34,7 +32,7 @@ Status WaitEvent::ComputeInternal(OpKernelContext* ctx) const {
   auto& profile_context = profile::Context::GetInstance();
   const auto tag = profile_context.GetThreadTagOrDefault(std::this_thread::get_id());
   profile::NvtxRangeCreator range(
-    "Batch-" + tag + " Wait-" + std::to_string(event_id), profile::Color::Blue);
+      "Batch-" + tag + " Wait-" + std::to_string(event_id), profile::Color::Blue);
   range.Begin();
 #endif
 

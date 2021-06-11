@@ -12,6 +12,7 @@
 #include "core/framework/run_options.h"
 #include "core/framework/session_state.h"
 #include "core/framework/tensor.h"
+#include "core/framework/prepacked_weights_container.h"
 #include "core/graph/graph_viewer.h"
 #include "core/graph/model.h"
 #include "core/framework/data_types.h"
@@ -19,6 +20,7 @@
 #include "test/framework/TestAllocatorManager.h"
 #include "core/framework/TensorSeq.h"
 #include "core/framework/session_options.h"
+#include "core/providers/providers.h"
 #include "test/util/include/asserts.h"
 
 #include "gmock/gmock.h"
@@ -275,7 +277,7 @@ class OpTester {
   void AddInput(const char* name, const T& val) {
     auto mltype = DataTypeImpl::GetType<T>();
     ORT_ENFORCE(mltype != nullptr, "T must be a registered cpp type");
-    auto ptr = onnxruntime::make_unique<T>(val);
+    auto ptr = std::make_unique<T>(val);
     OrtValue value;
     value.Init(ptr.get(), mltype, mltype->GetDeleteFunc());
     ptr.release();
@@ -287,7 +289,7 @@ class OpTester {
   void AddInput(const char* name, T&& val) {
     auto mltype = DataTypeImpl::GetType<T>();
     ORT_ENFORCE(mltype != nullptr, "T must be a registered cpp type");
-    auto ptr = onnxruntime::make_unique<T>(std::move(val));
+    auto ptr = std::make_unique<T>(std::move(val));
     OrtValue value;
     value.Init(ptr.get(), mltype, mltype->GetDeleteFunc());
     ptr.release();
@@ -307,7 +309,7 @@ class OpTester {
 
   template <typename TKey, typename TVal>
   void AddInput(const char* name, const std::map<TKey, TVal>& val) {
-    std::unique_ptr<std::map<TKey, TVal>> ptr = onnxruntime::make_unique<std::map<TKey, TVal>>(val);
+    std::unique_ptr<std::map<TKey, TVal>> ptr = std::make_unique<std::map<TKey, TVal>>(val);
     OrtValue value;
     value.Init(ptr.release(), DataTypeImpl::GetType<std::map<TKey, TVal>>(),
                DataTypeImpl::GetType<std::map<TKey, TVal>>()->GetDeleteFunc());
@@ -324,20 +326,24 @@ class OpTester {
 
   template <typename T>
   void AddOutput(const char* name, const std::vector<int64_t>& dims, const std::initializer_list<T>& expected_values,
-                 bool sort_output = false) {
-    AddData(output_data_, name, dims, expected_values.begin(), expected_values.size(), false, sort_output);
+                 bool sort_output = false, float rel_error = 0.0f, float abs_error = 0.0f) {
+    AddData(output_data_, name, dims, expected_values.begin(), expected_values.size(), false,
+            sort_output, nullptr /* dim_params */, rel_error, abs_error);
   }
 
   // This function doesn't work for vector<bool> because const vector<bool> cannot invoke its data().
   template <typename T>
   void AddOutput(const char* name, const std::vector<int64_t>& dims, const std::vector<T>& expected_values,
-                 bool sort_output = false) {
-    AddData(output_data_, name, dims, expected_values.data(), expected_values.size(), false, sort_output);
+                 bool sort_output = false, float rel_error = 0.0f, float abs_error = 0.0f) {
+    AddData(output_data_, name, dims, expected_values.data(), expected_values.size(), false,
+            sort_output, nullptr /* dim_params */, rel_error, abs_error);
   }
 
   template <typename T>
-  void AddOutput(const char* name, const std::vector<int64_t>& dims, const T* p_values, const size_t size) {
-    AddData(output_data_, name, dims, p_values, size);
+  void AddOutput(const char* name, const std::vector<int64_t>& dims, const T* p_values, const size_t size,
+                 bool sort_output = false, float rel_error = 0.0f, float abs_error = 0.0f) {
+    AddData(output_data_, name, dims, p_values, size, false,
+            sort_output, nullptr /* dim_params */, rel_error, abs_error);
   }
 
   template <typename T>
@@ -352,7 +358,7 @@ class OpTester {
   void AddOutput(const char* name, const T& val) {
     auto mltype = DataTypeImpl::GetType<T>();
     ORT_ENFORCE(mltype != nullptr, "T must be a registered cpp type");
-    auto ptr = onnxruntime::make_unique<T>(val);
+    auto ptr = std::make_unique<T>(val);
     OrtValue value;
     value.Init(ptr.get(), mltype, mltype->GetDeleteFunc());
     ptr.release();
@@ -364,7 +370,7 @@ class OpTester {
   void AddOutput(const char* name, T&& val) {
     auto mltype = DataTypeImpl::GetType<T>();
     ORT_ENFORCE(mltype != nullptr, "T must be a registered cpp type");
-    auto ptr = onnxruntime::make_unique<T>(std::move(val));
+    auto ptr = std::make_unique<T>(std::move(val));
     OrtValue value;
     value.Init(ptr.get(), mltype, mltype->GetDeleteFunc());
     ptr.release();
@@ -375,7 +381,7 @@ class OpTester {
   // Add non tensor output
   template <typename TKey, typename TVal>
   void AddOutput(const char* name, const std::vector<std::map<TKey, TVal>>& val) {
-    auto ptr = onnxruntime::make_unique<std::vector<std::map<TKey, TVal>>>(val);
+    auto ptr = std::make_unique<std::vector<std::map<TKey, TVal>>>(val);
     OrtValue ml_value;
     ml_value.Init(ptr.release(), DataTypeImpl::GetType<std::vector<std::map<TKey, TVal>>>(),
                   DataTypeImpl::GetType<std::vector<std::map<TKey, TVal>>>()->GetDeleteFunc());
@@ -432,9 +438,12 @@ class OpTester {
            const std::unordered_set<std::string>& excluded_provider_types = {},
            const RunOptions* run_options = nullptr,
            std::vector<std::unique_ptr<IExecutionProvider>>* execution_providers = nullptr,
-           const Graph::ResolveOptions& resolve_options = {});
+           const Graph::ResolveOptions& resolve_options = {},
+           /*out*/ size_t* number_of_pre_packed_weights_counter = nullptr,
+           /*out*/ size_t* number_of_shared_pre_packed_weights_counter = nullptr);
 
-  std::vector<MLValue> GetFetches() { return fetches_; }
+  std::vector<MLValue>
+  GetFetches() { return fetches_; }
 
   std::unique_ptr<onnxruntime::Model> BuildGraph(const std::unordered_map<std::string, int>& extra_domain_to_version = {});
 
@@ -483,6 +492,14 @@ class OpTester {
     use_determinism_ = use_determinism;
   }
 
+  void EnableSharingOfPrePackedWeightsAcrossSessions() {
+    add_prepacked_shared_container_to_sessions_ = true;
+  }
+
+  size_t GetNumPrePackedWeightsShared() const {
+    return prepacked_weights_container_.GetNumberOfElements();
+  }
+
  protected:
   virtual void AddNodes(onnxruntime::Graph& graph, std::vector<onnxruntime::NodeArg*>& graph_input_defs,
                         std::vector<onnxruntime::NodeArg*>& graph_output_defs,
@@ -521,14 +538,15 @@ class OpTester {
   template <typename T>
   void AddData(std::vector<Data>& data, const char* name, const std::vector<int64_t>& dims, const T* values,
                int64_t values_count, bool is_initializer = false, bool sort_output = false,
-               const std::vector<std::string>* dim_params = nullptr) {
+               const std::vector<std::string>* dim_params = nullptr,
+               float rel_error = 0.0f, float abs_error = 0.0f) {
     ORT_TRY {
       TensorShape shape{dims};
       ORT_ENFORCE(shape.Size() == values_count, values_count, " input values doesn't match tensor size of ",
                   shape.Size());
 
       auto allocator = test::AllocatorManager::Instance().GetAllocator(CPU);
-      auto p_tensor = onnxruntime::make_unique<Tensor>(DataTypeImpl::GetType<T>(), shape, allocator);
+      auto p_tensor = std::make_unique<Tensor>(DataTypeImpl::GetType<T>(), shape, allocator);
 
       auto* data_ptr = p_tensor->template MutableData<T>();
       for (int64_t i = 0; i < values_count; i++) {
@@ -565,7 +583,19 @@ class OpTester {
         }
         node_arg.SetShape(new_shape);
       }
-      data.push_back(Data(std::move(node_arg), std::move(value), optional<float>(), optional<float>(), sort_output));
+
+      optional<float> rel;
+      optional<float> abs;
+
+      if (rel_error != 0.0f) {
+        rel = rel_error;
+      }
+
+      if (abs_error != 0.0f) {
+        abs = abs_error;
+      }
+
+      data.push_back(Data(std::move(node_arg), std::move(value), std::move(rel), std::move(abs), sort_output));
       if (is_initializer) initializer_index_.push_back(data.size() - 1);
     }
     ORT_CATCH(const std::exception& ex) {
@@ -604,7 +634,7 @@ class OpTester {
 
     OrtValue value;
     auto mltype = DataTypeImpl::GetType<TensorSeq>();
-    auto ptr = onnxruntime::make_unique<TensorSeq>(elem_type);
+    auto ptr = std::make_unique<TensorSeq>(elem_type);
     ptr->SetElements(std::move(tensors));
     value.Init(ptr.get(), mltype, mltype->GetDeleteFunc());
     ptr.release();
@@ -628,6 +658,10 @@ class OpTester {
   bool use_determinism_ = false;
 
   CustomOutputVerifierFn custom_output_verifier_;
+
+  bool add_prepacked_shared_container_to_sessions_ = false;
+
+  onnxruntime::PrepackedWeightsContainer prepacked_weights_container_;
 };
 
 template <typename TException>

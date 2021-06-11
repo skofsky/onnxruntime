@@ -126,7 +126,8 @@ class FusionReshape(Fusion):
                                     value=helper.make_tensor(name='const_tensor',
                                                              data_type=TensorProto.INT64,
                                                              dims=shape_value.shape,
-                                                             vals=shape_value))
+                                                             vals=bytes(shape_value),
+                                                             raw=True))
         reshape_node.input[1] = constant_shape_name
         reshape_node.name = self.model.create_node_name('Reshape', 'Reshape_Fuse')
         self.nodes_to_remove.extend([concat_node])
@@ -135,3 +136,4 @@ class FusionReshape(Fusion):
         self.nodes_to_remove.extend(path2)
         self.nodes_to_remove.extend(path3)
         self.nodes_to_add.append(new_node)
+        self.node_name_to_graph_name[new_node.name] = self.this_graph_name

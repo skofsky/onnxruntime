@@ -192,7 +192,7 @@ TEST(MathOpTest, Add_Broadcast_0x0) {
   test.AddInput<float>("A", {}, {10.0f});
   test.AddInput<float>("B", {}, {2.0f});
   test.AddOutput<float>("C", {}, {12.0f});
-  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kNnapiExecutionProvider});  // NNAPI: Add does not support scalar input
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "");
 }
 
 TEST(MathOpTest, Add_Broadcast_0x1) {
@@ -202,14 +202,14 @@ TEST(MathOpTest, Add_Broadcast_0x1) {
     test.AddInput<float>("A", {}, {10.0f}, scalar_as_initializer);
     test.AddInput<float>("B", {1}, {2.0f});
     test.AddOutput<float>("C", {1}, {12.0f});
+#if defined(OPENVINO_CONFIG_MYRIAD)
+    test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kOpenVINOExecutionProvider});  // OpenVINO: disabled temporarily on MYRIADX due to a bug
+#else
     test.Run(OpTester::ExpectResult::kExpectSuccess, "");
+#endif
   };
 
-  // NNAPI only supports scalar initializer, not scalar input
-#ifndef USE_NNAPI
   run(false);
-#endif
-
   run(true);
 }
 
@@ -220,13 +220,14 @@ TEST(MathOpTest, Add_Broadcast_1x0) {
     test.AddInput<float>("A", {1}, {10.0f});
     test.AddInput<float>("B", {}, {2.0f}, scalar_as_initializer);
     test.AddOutput<float>("C", {1}, {12.0f});
+#if defined(OPENVINO_CONFIG_MYRIAD)
+    test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kOpenVINOExecutionProvider});  // OpenVINO: disabled temporarily on MYRIADX due to a bug
+#else
     test.Run(OpTester::ExpectResult::kExpectSuccess, "");
-  };
-  // NNAPI only supports scalar initializer, not scalar input
-#ifndef USE_NNAPI
-  run(false);
 #endif
+  };
 
+  run(false);
   run(true);
 }
 
@@ -398,11 +399,7 @@ TEST(MathOpTest, Sub_Broadcast_Scalar) {
     test.Run(OpTester::ExpectResult::kExpectSuccess, "");
   };
 
-  // NNAPI only supports scalar initializer, not scalar input
-#ifndef USE_NNAPI
   run(false);
-#endif
-
   run(true);
 }
 
@@ -450,11 +447,8 @@ TEST(MathOpTest, Div_int32) {
   test.AddInput<int32_t>("A", {3}, {4, 8, 8});
   test.AddInput<int32_t>("B", {3}, {1, 3, 2});
   test.AddOutput<int32_t>("C", {3}, {4, 2, 4});
-#if defined(OPENVINO_CONFIG_MYRIAD) || defined(OPENVINO_CONFIG_VAD_M)
-  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kOpenVINOExecutionProvider});  // OpenVINO EP: Hardware limitation
-#else
-  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});  //TensorRT parser:elementwise inputs must not be Int32
-#endif
+  //ov parser accuracy mismatch for div
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});  //TensorRT parser:elementwise inputs must not be Int32
 }
 
 TEST(MathOpTest, Div_int64) {
@@ -462,11 +456,8 @@ TEST(MathOpTest, Div_int64) {
   test.AddInput<int64_t>("A", {3}, {4, 8, 8});
   test.AddInput<int64_t>("B", {3}, {2, 3, 4});
   test.AddOutput<int64_t>("C", {3}, {2, 2, 2});
-#if defined(OPENVINO_CONFIG_MYRIAD) || defined(OPENVINO_CONFIG_VAD_M)
-  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kOpenVINOExecutionProvider});  // OpenVINO EP: Hardware limitation
-#else
-  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});  //TensorRT parser:elementwise inputs must not be Int32
-#endif
+  //ov parser accuracy mismatch for div
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});  //TensorRT parser:elementwise inputs must not be Int32
 }
 
 TEST(MathOpTest, Div) {
@@ -593,6 +584,18 @@ TEST(MathOpTest, Reciprocal) {
   test.AddOutput<float>("Y", dims,
                         {1.0f, 0.5f,
                          -1.0f, -0.5f});
+  test.Run();
+}
+
+TEST(MathOpTest, Reciprocal_double) {
+  OpTester test("Reciprocal");
+  std::vector<int64_t> dims{2, 2};
+  test.AddInput<double>("X", dims,
+                        {1.0, 2.0,
+                         -1.0, -2.0});
+  test.AddOutput<double>("Y", dims,
+                         {1.0, 0.5,
+                          -1.0, -0.5});
   test.Run();
 }
 
@@ -774,7 +777,7 @@ TEST(MathOpTest, Pow_double_int64) {
   test.Run();
 }
 
-#ifdef USE_CUDA
+#if defined(USE_CUDA) || defined(USE_ROCM)
 TEST(MathOpTest, Pow_float16_float16) {
   OpTester test("Pow", 12);
   std::vector<int64_t> dims{4};
@@ -784,7 +787,11 @@ TEST(MathOpTest, Pow_float16_float16) {
   test.AddOutput<MLFloat16>("Z", dims, MakeMLFloat16({1.0f, 256.0f, 2.0f, 1.0f}));
 
   std::vector<std::unique_ptr<IExecutionProvider>> execution_providers;
+#ifdef USE_CUDA
   execution_providers.push_back(DefaultCudaExecutionProvider());
+#elif USE_ROCM
+  execution_providers.push_back(DefaultRocmExecutionProvider());
+#endif
   test.Run(OpTester::ExpectResult::kExpectSuccess, "", {}, nullptr, &execution_providers);
 }
 
@@ -797,7 +804,11 @@ TEST(MathOpTest, Pow_float_float16) {
   test.AddOutput<MLFloat16>("Z", dims, MakeMLFloat16({1.0f, 256.0f, 2.0f, 1.0f}));
 
   std::vector<std::unique_ptr<IExecutionProvider>> execution_providers;
+#ifdef USE_CUDA
   execution_providers.push_back(DefaultCudaExecutionProvider());
+#elif USE_ROCM
+  execution_providers.push_back(DefaultRocmExecutionProvider());
+#endif
   test.Run(OpTester::ExpectResult::kExpectSuccess, "", {}, nullptr, &execution_providers);
 }
 #endif
@@ -842,6 +853,19 @@ TEST(MathOpTest, Log) {
   test.Run();
 }
 
+TEST(MathOpTest, Log_double) {
+  OpTester test("Log");
+  std::vector<int64_t> dims{2, 2};
+  test.AddInput<double>("X", dims,
+                        {1.0, 2.0,
+                         5.0, 10.0});
+  test.AddOutput<double>("Y", dims,
+                         {0.0, std::log(2.0),
+                          std::log(5.0), std::log(10.0)});
+  test.SetOutputRelErr("Y", 1e-7f);
+  test.Run();
+}
+
 TEST(MathOpTest, Sum_6) {
   OpTester test("Sum", 6);
   std::vector<int64_t> dims{3, 3};
@@ -861,6 +885,33 @@ TEST(MathOpTest, Sum_6) {
                         {3.0f, 0.0f, 6.0f,
                          -6.0f, 6.6f, 28.0f,
                          -1.0f, 0.06f, 0.25f});
+
+#if defined(OPENVINO_CONFIG_MYRIAD) || defined(OPENVINO_CONFIG_GPU_FP16)
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kOpenVINOExecutionProvider});  // OpenVINO EP: Disabled due to accuracy mismatch for FP16
+#else
+  test.Run();
+#endif
+}
+
+TEST(MathOpTest, Sum_6_double) {
+  OpTester test("Sum", 6);
+  std::vector<int64_t> dims{3, 3};
+  test.AddInput<double>("data_0", dims,
+                        {1.0, 0.0, 1.0,
+                         -1.0, 1.1, -100.0,
+                         -5.4, 0.01, -10000.0});
+  test.AddInput<double>("data_1", dims,
+                        {1.0, 0.0, 2.0,
+                         -2.0, 2.2, 64.0,
+                         -1.0, 0.02, 0.25});
+  test.AddInput<double>("data_3", dims,
+                        {1.0, 0.0, 3.0,
+                         -3.0, 3.3, 64.0,
+                         5.4, 0.03, 10000.0});
+  test.AddOutput<double>("sum", dims,
+                         {3.0, 0.0, 6.0,
+                          -6.0, 6.6, 28.0,
+                          -1.0, 0.06, 0.25});
 
 #if defined(OPENVINO_CONFIG_MYRIAD) || defined(OPENVINO_CONFIG_GPU_FP16)
   test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kOpenVINOExecutionProvider});  // OpenVINO EP: Disabled due to accuracy mismatch for FP16
@@ -895,6 +946,31 @@ TEST(MathOpTest, Sum_8_Test1) {
 #endif
 }
 
+TEST(MathOpTest, Sum_8_Test1_double) {
+  OpTester test("Sum", 8);
+  test.AddInput<double>("data_0", {3}, {1.0, 2.0, 3.0});
+  test.AddInput<double>("data_1", {3, 1}, {10.0, 20.0, 30.0});
+  test.AddInput<double>("data_2", {3, 1, 1}, {100.0, 200.0, 300.0});
+  test.AddOutput<double>("sum", {3, 3, 3},
+                         {111.0, 112.0, 113.0,
+                          121.0, 122.0, 123.0,
+                          131.0, 132.0, 133.0,
+
+                          211.0, 212.0, 213.0,
+                          221.0, 222.0, 223.0,
+                          231.0, 232.0, 233.0,
+
+                          311.0, 312.0, 313.0,
+                          321.0, 322.0, 323.0,
+                          331.0, 332.0, 333.0});
+#if defined(OPENVINO_CONFIG_GPU_FP16) || defined(OPENVINO_CONFIG_GPU_FP32) || defined(OPENVINO_CONFIG_MYRIAD) || defined(OPENVINO_CONFIG_VAD_M)
+  //OpenVINO: Disabled due to software limitation for GPU and VPU Plugins.
+  //This test runs fine on CPU Plugin
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});
+#else
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});                    //TensorRT: Expected output shape [{3,3,3}] did not match run output shape [{3,1,1}] for sum
+#endif
+}
 TEST(MathOpTest, Sum_8_Test2) {
   OpTester test("Sum", 8);
   std::vector<int64_t> dims{3, 3};
@@ -922,15 +998,50 @@ TEST(MathOpTest, Sum_8_Test2) {
                          59.6f, 64.01f, -8.0f});
 
 #if defined(OPENVINO_CONFIG_GPU_FP16) || defined(OPENVINO_CONFIG_GPU_FP32) || defined(OPENVINO_CONFIG_MYRIAD) || defined(OPENVINO_CONFIG_VAD_M)
-  // OpenVINO: Disabled temporarily due to accuarcy issues
+  // OpenVINO: Disabled temporarily due to accuracy issues
   test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});  //TensorRT: Input batch size is inconsistent
 #else
   test.Run(OpTester::ExpectResult::kExpectSuccess, "Sum is not correct", {kTensorrtExecutionProvider});  //TensorRT: result differs
 #endif
 }
 
+TEST(MathOpTest, Sum_8_Test2_double) {
+  OpTester test("Sum", 8);
+  std::vector<int64_t> dims{3, 3};
+  test.AddInput<double>("data_0", dims,
+                        {
+                            1.0,
+                            0.0,
+                            1.0,
+                            -1.0,
+                            1.1,
+                            -100.0,
+                            -5.4,
+                            0.01,
+                            -74.0,
+                        });
+  std::vector<int64_t> dims_1{3};
+  test.AddInput<double>("data_1", dims_1,
+                        {1.0, 0.0, 2.0});
+  std::vector<int64_t> dims_2{3, 1};
+  test.AddInput<double>("data_2", dims_2,
+                        {-3.0, 3.3, 64.0});
+  test.AddOutput<double>("sum", dims,
+                         {-1.0, -3.0, 0.0,
+                          3.3, 4.4, -94.7,
+                          59.6, 64.01, -8.0});
+
+#if defined(OPENVINO_CONFIG_GPU_FP16) || defined(OPENVINO_CONFIG_GPU_FP32) || defined(OPENVINO_CONFIG_MYRIAD) || defined(OPENVINO_CONFIG_VAD_M)
+  // OpenVINO: Disabled temporarily due to accuracy issues
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});  //TensorRT: Input batch size is inconsistent
+#else
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "Sum is not correct", {kTensorrtExecutionProvider});  //TensorRT: result differs
+#endif
+}
+
+template <typename T>
 static void TestSumMultipleInputsNoBroadcasting(size_t num_inputs, const TensorShape& shape) {
-  using element_type = float;
+  using element_type = T;
 
   OpTester test{"Sum", 8};
 
@@ -958,7 +1069,14 @@ static void TestSumMultipleInputsNoBroadcasting(size_t num_inputs, const TensorS
 TEST(MathOpTest, SumMultipleInputsNoBroadcasting) {
   const TensorShape shape{3, 3, 3};
   for (size_t num_inputs = 2; num_inputs < 10; ++num_inputs) {
-    TestSumMultipleInputsNoBroadcasting(num_inputs, shape);
+    TestSumMultipleInputsNoBroadcasting<float>(num_inputs, shape);
+  }
+}
+
+TEST(MathOpTest, SumMultipleInputsNoBroadcasting_double) {
+  const TensorShape shape{3, 3, 3};
+  for (size_t num_inputs = 2; num_inputs < 10; ++num_inputs) {
+    TestSumMultipleInputsNoBroadcasting<double>(num_inputs, shape);
   }
 }
 
@@ -1027,6 +1145,21 @@ TEST(MathOpTest, Min_12_Float) {
   test.AddOutput<float>("min", {3, 3},
                         {-1.0f, -1.0f, -1.0f,
                          1.0f, 2.0f, 3.0f,
+                         -70.0f, -80.0f, -90.0f});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});  //TensorRT: Input batch size is inconsistent
+}
+
+TEST(MathOpTest, Min_12_Float_2_Input) {
+  OpTester test("Min", 12);
+  test.AddInput<float>("data_2", {3, 3},
+                       {10.0f, 20.0f, 30.0f,
+                        40.0f, 50.0f, 60.0f,
+                        -70.0f, -80.0f, -90.0f});
+  test.AddInput<float>("data_1", {3, 1},
+                       {-1.0f, 20.0f, 300.0f});
+  test.AddOutput<float>("min", {3, 3},
+                        {-1.0f, -1.0f, -1.0f,
+                         20.0f, 20.0f, 20.0f,
                          -70.0f, -80.0f, -90.0f});
   test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider, kOpenVINOExecutionProvider});  //TensorRT: Input batch size is inconsistent
 }
@@ -1116,6 +1249,44 @@ TEST(MathOpTest, Min_12_UInt64) {
   test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});  //TensorRT: Input batch size is inconsistent
 }
 
+TEST(MathOpTest, Min_12_MLFLoat16) {
+  OpTester test("Min", 12);
+  test.AddInput<MLFloat16>("data_0", {1, 3},
+                           MakeMLFloat16({1.f, 1.f, 1.f}));
+  test.AddInput<MLFloat16>("data_1", {1, 3},
+                           MakeMLFloat16({2.f, -1.f, -2.f}));
+  test.AddInput<MLFloat16>("data_2", {1, 3},
+                           MakeMLFloat16({3.f, 2.f, -3.f}));
+  test.AddOutput<MLFloat16>("min", {1, 3},
+                            MakeMLFloat16({1.f, -1.f, -3.f}));
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});  //TensorRT: Input batch size is inconsistent
+}
+
+TEST(MathOpTest, Min_12_MLFLoat16_Scalar0) {
+  OpTester test("Min", 12);
+  test.AddInput<MLFloat16>("data_0", {},
+                           MakeMLFloat16({-10.f}));
+  test.AddInput<MLFloat16>("data_1", {1, 3},
+                           MakeMLFloat16({2.f, -1.f, -2.f}));
+  test.AddInput<MLFloat16>("data_2", {1, 3},
+                           MakeMLFloat16({3.f, 2.f, -3.f}));
+  test.AddOutput<MLFloat16>("min", {1, 3},
+                            MakeMLFloat16({-10.f, -10.f, -10.f}));
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});  //TensorRT: Input batch size is inconsistent
+}
+
+TEST(MathOpTest, Min_12_MLFLoat16_Scalar1) {
+  OpTester test("Min", 12);
+  test.AddInput<MLFloat16>("data_0", {1, 3},
+                           MakeMLFloat16({2.f, 3.f, 4.f}));
+  test.AddInput<MLFloat16>("data_1", {},
+                           MakeMLFloat16({-10.f}));
+  test.AddInput<MLFloat16>("data_2", {1, 3},
+                           MakeMLFloat16({3.f, 2.f, -3.f}));
+  test.AddOutput<MLFloat16>("min", {1, 3},
+                            MakeMLFloat16({-10.f, -10.f, -10.f}));
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});  //TensorRT: Input batch size is inconsistent
+}
 TEST(MathOpTest, Max_6) {
   OpTester test("Max", 6);
   std::vector<int64_t> dims{3, 3};
@@ -1293,6 +1464,45 @@ TEST(MathOpTest, Max_12_UInt64) {
   test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});  //TensorRT: Input batch size is inconsistent
 }
 
+TEST(MathOpTest, Max_12_MLFLoat16) {
+  OpTester test("Max", 12);
+  test.AddInput<MLFloat16>("data_0", {1, 3},
+                           MakeMLFloat16({-1.f, -1.f, -1.f}));
+  test.AddInput<MLFloat16>("data_1", {1, 3},
+                           MakeMLFloat16({-2.f, -1.f, -2.f}));
+  test.AddInput<MLFloat16>("data_2", {1, 3},
+                           MakeMLFloat16({-3.f, -2.f, -3.f}));
+  test.AddOutput<MLFloat16>("max", {1, 3},
+                            MakeMLFloat16({-1.f, -1.f, -1.f}));
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});  //TensorRT: Input batch size is inconsistent
+}
+
+TEST(MathOpTest, Max_12_MLFLoat16_Scalar0) {
+  OpTester test("Max", 12);
+  test.AddInput<MLFloat16>("data_0", {},
+                           MakeMLFloat16({-1.f}));
+  test.AddInput<MLFloat16>("data_1", {1, 3},
+                           MakeMLFloat16({-11.f, -12.f, -22.f}));
+  test.AddInput<MLFloat16>("data_2", {1, 3},
+                           MakeMLFloat16({-10.f, -11.f, -13.f}));
+  test.AddOutput<MLFloat16>("max", {1, 3},
+                            MakeMLFloat16({-1.f, -1.f, -1.f}));
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});  //TensorRT: Input batch size is inconsistent
+}
+
+TEST(MathOpTest, Max_12_MLFLoat16_Scalar1) {
+  OpTester test("Max", 12);
+  test.AddInput<MLFloat16>("data_0", {1, 3},
+                           MakeMLFloat16({-1.f, -2.f, -3.f}));
+  test.AddInput<MLFloat16>("data_1", {},
+                           MakeMLFloat16({2.f}));
+  test.AddInput<MLFloat16>("data_2", {1, 3},
+                           MakeMLFloat16({-2.f, -3.f, -4.f}));
+  test.AddOutput<MLFloat16>("max", {1, 3},
+                            MakeMLFloat16({2.f, 2.f, 2.f}));
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});  //TensorRT: Input batch size is inconsistent
+}
+
 TEST(MathOpTest, Not) {
   OpTester test("Not");
   std::vector<int64_t> dims{2};
@@ -1418,6 +1628,78 @@ TEST(MathOpTest, Less_multidiretional_broadcastBA) {
   test.Run();
 }
 
+TEST(MathOpTest, LessOrEqual) {
+  OpTester test("LessOrEqual", 12);
+  std::vector<int64_t> dims{4};
+  test.AddInput<float>("A", dims, {1.0f, 0.0f, -1.0f, -1.0f});
+  test.AddInput<float>("B", dims, {1.0f, 1.0f, 2.0f, -1.0f});
+  test.AddOutput<bool>("C", dims, {true, true, true, true});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+TEST(MathOpTest, LessOrEqual_Scalar0) {
+  OpTester test("LessOrEqual", 12);
+  test.AddInput<float>("A", {1}, {1.0f});
+  test.AddInput<float>("B", {4}, {1.0f, 1.5f, 2.0f, -1.0f});
+  test.AddOutput<bool>("C", {4}, {true, true, true, false});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+TEST(MathOpTest, LessOrEqual_Scalar1) {
+  OpTester test("LessOrEqual", 12);
+  test.AddInput<float>("A", {4}, {1.0f, 0.5f, 2.0f, -1.0f});
+  test.AddInput<float>("B", {1}, {1.0f});
+  test.AddOutput<bool>("C", {4}, {true, true, false, true});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+TEST(MathOpTest, LessOrEqual_int64_Scalar1) {
+  OpTester test("LessOrEqual", 12);
+  test.AddInput<int64_t>("A", {4}, {1, 0, 2, -1});
+  test.AddInput<int64_t>("B", {1}, {1});
+  test.AddOutput<bool>("C", {4}, {true, true, false, true});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
+}
+TEST(MathOpTest, LessOrEqual_broadcastAB) {
+  OpTester test("LessOrEqual", 12);
+  test.AddInput<int32_t>("A", {4, 2}, {10, 11, 12, 13, 14, 15, 16, 17});
+  test.AddInput<int32_t>("B", {2}, {15, 7});
+  test.AddOutput<bool>("C", {4, 2}, {true, false, true, false, true, false, false, false});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+TEST(MathOpTest, LessOrEqual_broadcastBA) {
+  OpTester test("LessOrEqual", 12);
+  test.AddInput<int32_t>("A", {2}, {15, 7});
+  test.AddInput<int32_t>("B", {4, 2}, {10, 11, 12, 13, 14, 15, 16, 17});
+  test.AddOutput<bool>("C", {4, 2}, {false, true, false, true, false, true, true, true});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+TEST(MathOpTest, LessOrEqual_multidiretional_broadcastAB) {
+  OpTester test("LessOrEqual", 12);
+  test.AddInput<int32_t>("A", {4, 1}, {10, 11, 12, 13});
+  test.AddInput<int32_t>("B", {2}, {15, 7});
+  test.AddOutput<bool>("C", {4, 2}, {true, false, true, false, true, false, true, false});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+TEST(MathOpTest, LessOrEqual_multidiretional_broadcastBA) {
+  OpTester test("LessOrEqual", 12);
+  test.AddInput<int32_t>("A", {2}, {15, 7});
+  test.AddInput<int32_t>("B", {4, 1}, {10, 11, 12, 13});
+  test.AddOutput<bool>("C", {4, 2}, {false, true, false, true, false, true, false, true});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
+}
+
 TEST(MathOpTest, Greater_7) {
   OpTester test("Greater");
   std::vector<int64_t> dims{4};
@@ -1493,6 +1775,82 @@ TEST(MathOpTest, Greater_multidiretional_broadcastBA) {
   test.AddInput<int32_t>("B", {4, 1}, {10, 11, 12, 13});
   test.AddOutput<bool>("C", {4, 2}, {true, false, true, false, true, false, true, false});
   test.Run();
+}
+
+TEST(MathOpTest, GreaterOrEqual_12_float) {
+  OpTester test("GreaterOrEqual", 12);
+  std::vector<int64_t> dims{4};
+  test.AddInput<float>("A", dims, {1.0f, 0.0f, -1.0f, -1.0f});
+  test.AddInput<float>("B", dims, {1.0f, 1.0f, 2.0f, -1.0f});
+  test.AddOutput<bool>("C", dims, {true, false, false, true});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+TEST(MathOpTest, GreaterOrEqual_12_double) {
+  OpTester test("GreaterOrEqual", 12);
+  std::vector<int64_t> dims{4};
+  test.AddInput<double>("A", dims, {1.0, 0.0, 3.0, -1.0});
+  test.AddInput<double>("B", dims, {1.0, 1.0, 2.0, -1.0});
+  test.AddOutput<bool>("C", dims, {true, false, true, true});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+TEST(MathOpTest, GreaterOrEqual_12_int32) {
+  OpTester test("GreaterOrEqual", 12);
+  std::vector<int64_t> dims{4};
+  test.AddInput<int32_t>("A", dims, {10, 11, 12, 13});
+  test.AddInput<int32_t>("B", dims, {15, 7, 12, 9});
+  test.AddOutput<bool>("C", dims, {false, true, true, true});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+TEST(MathOpTest, GreaterOrEqual_12_int64) {
+  OpTester test("GreaterOrEqual", 12);
+  std::vector<int64_t> dims{4};
+  test.AddInput<int64_t>("A", dims, {10, 11, 12, 13});
+  test.AddInput<int64_t>("B", dims, {15, 7, 12, 9});
+  test.AddOutput<bool>("C", dims, {false, true, true, true});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+TEST(MathOpTest, GreaterOrEqual_broadcastAB) {
+  OpTester test("GreaterOrEqual", 12);
+  test.AddInput<int32_t>("A", {4, 2}, {10, 11, 12, 13, 14, 15, 16, 17});
+  test.AddInput<int32_t>("B", {2}, {15, 7});
+  test.AddOutput<bool>("C", {4, 2}, {false, true, false, true, false, true, true, true});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+TEST(MathOpTest, GreaterOrEqual_broadcastBA) {
+  OpTester test("GreaterOrEqual", 12);
+  test.AddInput<int32_t>("A", {2}, {15, 7});
+  test.AddInput<int32_t>("B", {4, 2}, {10, 11, 12, 13, 14, 15, 16, 17});
+  test.AddOutput<bool>("C", {4, 2}, {true, false, true, false, true, false, false, false});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+TEST(MathOpTest, GreaterOrEqual_multidiretional_broadcastAB) {
+  OpTester test("GreaterOrEqual", 12);
+  test.AddInput<int32_t>("A", {4, 1}, {10, 11, 12, 13});
+  test.AddInput<int32_t>("B", {2}, {15, 7});
+  test.AddOutput<bool>("C", {4, 2}, {false, true, false, true, false, true, false, true});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
+}
+
+TEST(MathOpTest, GreaterOrEqual_multidiretional_broadcastBA) {
+  OpTester test("GreaterOrEqual", 12);
+  test.AddInput<int32_t>("A", {2}, {15, 7});
+  test.AddInput<int32_t>("B", {4, 1}, {10, 11, 12, 13});
+  test.AddOutput<bool>("C", {4, 2}, {true, false, true, false, true, false, true, false});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "",
+               {kTensorrtExecutionProvider, kNnapiExecutionProvider, kOpenVINOExecutionProvider});
 }
 
 TEST(MathOpTest, Equal_bool) {
@@ -1662,7 +2020,8 @@ void TrigFloatTest(OpTester& test, std::initializer_list<float> input) {
 }
 
 template <double (&op)(double value)>
-void TrigDoubleTest(OpTester& test, std::initializer_list<double> input) {
+void TrigDoubleTest(OpTester& test, std::initializer_list<double> input,
+                    const std::unordered_set<std::string> excluded_provider_types = {}) {
   std::vector<int64_t> dims{static_cast<int64_t>(input.size())};
 
   std::vector<double> output;
@@ -1671,9 +2030,24 @@ void TrigDoubleTest(OpTester& test, std::initializer_list<double> input) {
 
   test.AddInput<double>("X", dims, input);
   test.AddOutput<double>("Y", dims, output);
-  test.Run();
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", excluded_provider_types);
 }
 
+template <float (&op)(float value)>
+void TrigFloat16Test(OpTester& test, std::initializer_list<float> input) {
+  std::vector<int64_t> dims{static_cast<int64_t>(input.size())};
+
+  std::vector<MLFloat16> float16_input;
+  std::vector<MLFloat16> float16_output;
+  for (auto v : input) {
+    float16_input.push_back(MLFloat16(math::floatToHalf(v)));
+    float16_output.push_back(MLFloat16(math::floatToHalf(op(v))));
+  }
+
+  test.AddInput<MLFloat16>("X", dims, float16_input);
+  test.AddOutput<MLFloat16>("Y", dims, float16_output);
+  test.Run();
+}
 TEST(MathOpTest, SinFloat) {
   OpTester test("Sin");
   TrigFloatTest<std::sin>(test, {1.1f, -1.1f, 2.2f, -2.2f});
@@ -1684,11 +2058,33 @@ TEST(MathOpTest, SinDouble) {
   TrigDoubleTest<std::sin>(test, {1.1, -1.1, 2.2, -2.2});
 }
 
-TEST(MathOpTest, Cos) {
+TEST(MathOpTest, SinFloat16) {
+  if (DefaultCudaExecutionProvider().get() != nullptr) {  // MLFloat16 type not supported on CPU
+    OpTester test("Sin");
+    TrigFloat16Test<std::sin>(test, {1.1f, -1.1f, 2.2f, -2.2f});
+  }
+}
+
+TEST(MathOpTest, CosFloat) {
   OpTester test("Cos");
   TrigFloatTest<std::cos>(test, {1.1f, -1.1f, 2.2f, -2.2f});
 }
 
+TEST(MathOpTest, CosDouble) {
+  if (DefaultCudaExecutionProvider().get() != nullptr) {  // double type not supported on CPU
+    OpTester test("Cos");
+    TrigDoubleTest<std::cos>(test, {1.1, -1.1, 2.2, -2.2}, {kTensorrtExecutionProvider});
+    // Fails TensorRT unit-test because the unit tests only test one EP at a time and the TensorRT EP will not be able to find an implementation in the fall-back CPU EP,
+    // so skip it
+  }
+}
+
+TEST(MathOpTest, CosFloat16) {
+  if (DefaultCudaExecutionProvider().get() != nullptr) {  // MLFloat16 type not supported on CPU
+    OpTester test("Cos");
+    TrigFloat16Test<std::cos>(test, {1.1f, -1.1f, 2.2f, -2.2f});
+  }
+}
 TEST(MathOpTest, Tan) {
   OpTester test("Tan");
   TrigFloatTest<std::tan>(test, {-100.0f, -50.0f, 0.0f, 50.0f, 100.0f});

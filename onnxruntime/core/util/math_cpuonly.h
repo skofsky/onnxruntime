@@ -57,7 +57,9 @@
 #pragma warning(pop)
 #endif
 
+#ifndef SHARED_PROVIDER
 #include "core/framework/tensor.h"
+#endif
 namespace onnxruntime {
 
 // common Eigen types that we will often use
@@ -101,11 +103,11 @@ using ConstEigenMatrixMapRowMajorOuterStride =
 
 template <typename T>
 auto EigenMap(Tensor& t) -> EigenVectorMap<T> {
-  return EigenVectorMap<T>(t.template MutableData<T>(), t.Shape().Size());
+  return EigenVectorMap<T>(t.template MutableData<T>(), gsl::narrow<ptrdiff_t>(t.Shape().Size()));
 }
 template <typename T>
 auto EigenMap(const Tensor& t) -> ConstEigenVectorMap<T> {
-  return ConstEigenVectorMap<T>(t.template Data<T>(), t.Shape().Size());
+  return ConstEigenVectorMap<T>(t.template Data<T>(), gsl::narrow<ptrdiff_t>(t.Shape().Size()));
 }
 
 class CPUMathUtil {

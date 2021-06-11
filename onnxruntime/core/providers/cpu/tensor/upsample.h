@@ -3,7 +3,9 @@
 
 #pragma once
 
+#ifndef SHARED_PROVIDER
 #include "core/framework/op_kernel.h"
+#endif
 #include <cmath>
 
 namespace onnxruntime {
@@ -46,7 +48,7 @@ enum ResizeNearestMode {
 
 class UpsampleBase {
  protected:
-  UpsampleBase(OpKernelInfo info) : scales_cached_(false), roi_cached_(false), use_extrapolation_(false) {
+  UpsampleBase(const OpKernelInfo& info) : scales_cached_(false), roi_cached_(false), use_extrapolation_(false) {
     const auto& node = info.node();
     auto opset = node.SinceVersion();
     is_resize_ = (opset >= 10);
@@ -69,8 +71,8 @@ class UpsampleBase {
                                                      ? info.GetAttrOrDefault<std::string>("coordinate_transformation_mode", "half_pixel")
                                                      : "asymmetric";
     coordinate_transform_mode_ = StringToCoordinateTransformationMode(coordinate_transform_mode_name);
-    if (opset >= 13) {
-      LOGS(onnxruntime::logging::LoggingManager::DefaultLogger(), WARNING)
+    if (opset >= 13 && coordinate_transform_mode_ == TF_HALF_PIXEL_FOR_NN) {
+      LOGS_DEFAULT(WARNING)
           << "`tf_half_pixel_for_nn` is deprecated since opset 13, "
           << "yet this opset " << opset << " model uses the deprecated attribute";
     }
