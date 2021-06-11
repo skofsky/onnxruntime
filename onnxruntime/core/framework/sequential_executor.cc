@@ -1,6 +1,3 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
-
 #include "core/framework/sequential_executor.h"
 
 #include <chrono>
@@ -68,10 +65,10 @@ static void CalculateTotalOutputSizes(OpKernelContextInternal* op_kernel_context
 #if defined(TRACE_EXECUTION)
       const TensorShape& tensor_shape = tensor.Shape();
       std::cout << node_name << " output[" << i << "]"
-                         << " size=" << tensor_size
-                         << " shape=" << tensor_shape.ToString()
-                         << " element_size=" << tensor.DataType()->Size()
-                         << "\n";
+                << " size=" << tensor_size
+                << " shape=" << tensor_shape.ToString()
+                << " element_size=" << tensor.DataType()->Size()
+                << "\n";
 #endif
       total_output_sizes += tensor_size;
     }
@@ -280,21 +277,21 @@ Status SequentialExecutor::Execute(const SessionState& session_state, concurrenc
       return node.Name().empty() ? MakeString(node.OpType(), "_", node_index) : node.Name();
     }();
 
-    if (is_profiler_enabled) {
-      session_state.Profiler().EndTimeAndRecordEvent(profiling::NODE_EVENT,
-                                                     node_name_for_profiling + "_fence_before",
-                                                     sync_time_begin,
-                                                     {{"op_name", p_op_kernel->KernelDef().OpName()}});
-      concurrency::ThreadPool::StartProfiling(session_state.GetThreadPool());
-      // call compute on the kernel
-      VLOGS(logger, 1) << "Computing kernel: " << node_name_for_profiling;
+    //if (is_profiler_enabled) {
+    //  session_state.Profiler().EndTimeAndRecordEvent(profiling::NODE_EVENT,
+    //                                                 node_name_for_profiling + "_fence_before",
+    //                                                 sync_time_begin,
+    //                                                 {{"op_name", p_op_kernel->KernelDef().OpName()}});
+    //  concurrency::ThreadPool::StartProfiling(session_state.GetThreadPool());
+    //  // call compute on the kernel
+    //  VLOGS(logger, 1) << "Computing kernel: " << node_name_for_profiling;
 
-      kernel_begin_time = session_state.Profiler().StartTime();
+    //  kernel_begin_time = session_state.Profiler().StartTime();
 
-      // Calculate total input sizes for this operation.
-      CalculateTotalInputSizes(&op_kernel_context, p_op_kernel,
-                               input_activation_sizes, input_parameter_sizes, node_name_for_profiling);
-    }
+    //  // Calculate total input sizes for this operation.
+    //  CalculateTotalInputSizes(&op_kernel_context, p_op_kernel,
+    //                           input_activation_sizes, input_parameter_sizes, node_name_for_profiling);
+    //}
 
     Status compute_status;
     {
@@ -340,39 +337,39 @@ Status SequentialExecutor::Execute(const SessionState& session_state, concurrenc
       return Status(compute_status.Category(), compute_status.Code(), msg_string);
     }
 
-    if (is_profiler_enabled) {
-      // Calculate total output sizes for this operation.
-      CalculateTotalOutputSizes(&op_kernel_context, total_output_sizes, node_name_for_profiling);
-
-#if defined(TRACE_EXECUTION)
-      // Trace execution step.
-      const Node& node = p_op_kernel->Node();
-      std::cout << "Executed op kernel node " << node_name_for_profiling
-                << " Index=" << node.Index()
-                << " OpType=" << node.OpType()
-                << " Name=" << node.Name()
-                << " Activation_Size=" << input_activation_sizes
-                << " Parameter_Size=" << input_parameter_sizes
-                << " Output_Size=" << total_output_sizes
-                << "\n";
-#endif
-
-      session_state.Profiler().EndTimeAndRecordEvent(profiling::NODE_EVENT,
-                                                     node_name_for_profiling + "_kernel_time",
-                                                     kernel_begin_time,
-                                                     // Log additional operation args / info.
-                                                     {
-                                                         {"op_name", p_op_kernel->KernelDef().OpName()},
-                                                         {"provider", p_op_kernel->KernelDef().Provider()},
-                                                         {"graph_index", std::to_string(p_op_kernel->Node().Index())},
-                                                         {"exec_plan_index", std::to_string(node_index)},
-                                                         {"activation_size", std::to_string(input_activation_sizes)},
-                                                         {"parameter_size", std::to_string(input_parameter_sizes)},
-                                                         {"output_size", std::to_string(total_output_sizes)},
-                                                         {"thread_scheduling_stats", concurrency::ThreadPool::StopProfiling(session_state.GetThreadPool())},
-                                                     });
-      sync_time_begin = session_state.Profiler().StartTime();
-    }
+//    if (is_profiler_enabled) {
+//      // Calculate total output sizes for this operation.
+//      CalculateTotalOutputSizes(&op_kernel_context, total_output_sizes, node_name_for_profiling);
+//
+//#if defined(TRACE_EXECUTION)
+//      // Trace execution step.
+//      const Node& node = p_op_kernel->Node();
+//      std::cout << "Executed op kernel node " << node_name_for_profiling
+//                << " Index=" << node.Index()
+//                << " OpType=" << node.OpType()
+//                << " Name=" << node.Name()
+//                << " Activation_Size=" << input_activation_sizes
+//                << " Parameter_Size=" << input_parameter_sizes
+//                << " Output_Size=" << total_output_sizes
+//                << "\n";
+//#endif
+//
+//      session_state.Profiler().EndTimeAndRecordEvent(profiling::NODE_EVENT,
+//                                                     node_name_for_profiling + "_kernel_time",
+//                                                     kernel_begin_time,
+//                                                     // Log additional operation args / info.
+//                                                     {
+//                                                         {"op_name", p_op_kernel->KernelDef().OpName()},
+//                                                         {"provider", p_op_kernel->KernelDef().Provider()},
+//                                                         {"graph_index", std::to_string(p_op_kernel->Node().Index())},
+//                                                         {"exec_plan_index", std::to_string(node_index)},
+//                                                         {"activation_size", std::to_string(input_activation_sizes)},
+//                                                         {"parameter_size", std::to_string(input_parameter_sizes)},
+//                                                         {"output_size", std::to_string(total_output_sizes)},
+//                                                         {"thread_scheduling_stats", concurrency::ThreadPool::StopProfiling(session_state.GetThreadPool())},
+//                                                     });
+//      sync_time_begin = session_state.Profiler().StartTime();
+//    }
 
     // sync after compute for outputs
     if (seq_exec_plan.NodeHasFence(node_index)) {

@@ -1,6 +1,3 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
-
 #include "core/providers/cpu/tensor/transpose.h"
 
 #include "core/framework/element_type_lists.h"
@@ -197,6 +194,23 @@ static bool TypedDoTransposeEltWise(int64_t num_axes, const std::vector<int64_t>
 // DoTransposeEltWise: specialization of DoTranspose for the num_elts_in_block=1 case.
 // copies source tensor to target, transposing elements.
 // The stride vector indicates the transposition.
+Status DoTransposeEltWise(int64_t num_axes, const std::vector<int64_t>& target_dims, size_t num_blocks,
+                          const std::vector<size_t>& stride, const uint8_t* source, uint8_t* target,
+                          size_t element_size) {
+  bool enabled = false;
+  switch (element_size) {
+    case sizeof(uint64_t):
+      enabled = TypedDoTransposeEltWise<uint64_t>(num_axes, target_dims, num_blocks, stride, source, target);
+      break;
+    case sizeof(uint32_t):
+      enabled = TypedDoTransposeEltWise<uint32_t>(num_axes, target_dims, num_blocks, stride, source, target);
+      break;
+    case sizeof(uint16_t):
+      enabled = TypedDoTransposeEltWise<uint16_t>(num_axes, target_dims, num_blocks, stride, source, target);
+      break;
+    case sizeof(uint8_t):
+      enabled = TypedDoTransposeEltWise<uint8_t>(num_axes, target_dims, num_blocks, stride, source, target);
+      break;
     default:
       // leave enabled as false
       break;
@@ -213,6 +227,7 @@ static void DoTransposeEltWise(int64_t num_axes, const std::vector<int64_t>& tar
   MultiIndex mindex;
   IncrementIndexAndComputeOffsetSetup(mindex, num_axes, target_dims, stride, 1);
 
+  // index used to iterate over target iteration-space
   const std::string* local_source = source;
   for (size_t i = 0; i < num_blocks; ++i) {
     ORT_ENFORCE((local_source >= source) && (local_source < source + num_blocks));
@@ -299,27 +314,20 @@ static Status DoUntypedTranspose(const std::vector<size_t>& permutations, const 
 
 /*
 Optimizations for moving a single axis either inwards or outwards.
-
 If moving outwards we can use a single reader and multiple writers. The number of writers is equal to the value of
 the axis being moved.
-
   e.g. if the input is NHWC with shape {N, 300, 300, 3}, we can transpose to NCHW by reading once and having
        one writer for each of the 3 channels at a different offset in the output, updating the offset for each item
        in the batch of N.
-
 Similarly if one axis is moving inwards we can use a single writer and multiple readers. The number of readers is equal
 to the value of the axis being moved.
-
   e.g. if the input is NCHW with shape {N, 3, 300, 300}, we can transpose to NHWC by writing once using one reader for
        each of the 3 channels at a different offset in the input, updating the read offset for each item in the batch
        of N.
-
 This can be generalized for any input where only one axis is being moved, with the block size for each read/write
 being dependent on which axis is moving, what direction it's moving in, and where it's moving to.
-
 We use simple pointer arithmetic if the size of each read/write is a power of 2 and between 8 and 64 bits.
 We use memcpy if the block size is larger.
-
 We fall back to the default implementation in all other cases, and if the input is std::string.
 */
 

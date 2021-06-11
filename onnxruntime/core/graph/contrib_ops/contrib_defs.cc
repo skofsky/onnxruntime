@@ -18,150 +18,150 @@
 #include "onnx/defs/function.h"
 
 namespace ONNX_NAMESPACE {
-void convPoolShapeInference(
-    ONNX_NAMESPACE::InferenceContext& ctx,
-    bool use_dilation, bool require_kernel_shape,
-    int input1Idx,
-    int input2Idx);
-void matmulShapeInference(
-    ONNX_NAMESPACE::InferenceContext& ctx,
-    int input1Idx,
-    int input2Idx);
+  void convPoolShapeInference(
+      ONNX_NAMESPACE::InferenceContext& ctx,
+      bool use_dilation, bool require_kernel_shape,
+      int input1Idx,
+      int input2Idx);
+  void matmulShapeInference(
+      ONNX_NAMESPACE::InferenceContext& ctx,
+      int input1Idx,
+      int input2Idx);
 
-void convTransposeWithDynamicPadsShapeInference(InferenceContext& ctx) {
-  propagateElemTypeFromInputToOutput(ctx, 0, 0);
+  void convTransposeWithDynamicPadsShapeInference(InferenceContext& ctx) {
+    propagateElemTypeFromInputToOutput(ctx, 0, 0);
 
-  // we need at least two inputs to have a shape for this inference.
-  if (!hasNInputShapes(ctx, 2)) {
-    return;
-  }
-
-  int64_t group = getAttribute(ctx, "group", 1);
-
-  auto input_shape = ctx.getInputType(0)->tensor_type().shape();
-  if (input_shape.dim_size() < 2) {
-    return;  // Input tensor should have at least two dimensions.
-  }
-
-  // first dim is the batch axis and the next is the number of channels.
-  size_t n_input_dims = static_cast<size_t>(input_shape.dim_size() - size_t{2});
-
-  std::vector<int64_t> dilations;
-  if (getRepeatedAttribute(ctx, "dilations", dilations)) {
-    if (dilations.size() != n_input_dims) {
+    // we need at least two inputs to have a shape for this inference.
+    if (!hasNInputShapes(ctx, 2)) {
       return;
     }
-  } else {
-    dilations.assign(n_input_dims, 1);
-  }
 
-  std::vector<int64_t> strides;
-  if (getRepeatedAttribute(ctx, "strides", strides)) {
-    if (strides.size() != n_input_dims) {
-      return;
-    }
-  } else {
-    strides.assign(n_input_dims, 1);
-  }
+    int64_t group = getAttribute(ctx, "group", 1);
 
-  std::vector<int64_t> kernel_shape;
-  if (getRepeatedAttribute(ctx, "kernel_shape", kernel_shape)) {
-    if (kernel_shape.size() != n_input_dims) {
-      return;
+    auto input_shape = ctx.getInputType(0)->tensor_type().shape();
+    if (input_shape.dim_size() < 2) {
+      return;  // Input tensor should have at least two dimensions.
     }
-  } else {
-    auto second_input_shape = ctx.getInputType(1)->tensor_type().shape();
-    for (int i = 2; i < second_input_shape.dim_size(); ++i) {
-      if (!second_input_shape.dim(i).has_dim_value()) {
+
+    // first dim is the batch axis and the next is the number of channels.
+    size_t n_input_dims = static_cast<size_t>(input_shape.dim_size() - size_t{2});
+
+    std::vector<int64_t> dilations;
+    if (getRepeatedAttribute(ctx, "dilations", dilations)) {
+      if (dilations.size() != n_input_dims) {
         return;
       }
-      kernel_shape.push_back(second_input_shape.dim(i).dim_value());
+    } else {
+      dilations.assign(n_input_dims, 1);
     }
-  }
 
-  std::vector<int64_t> effective_kernel_shape = kernel_shape;
-  for (int i = 0; i < static_cast<int>(kernel_shape.size()); i++) {
-    // accounting for dilation, how big is the kernel in this dimension
-    effective_kernel_shape[i] =
-        (effective_kernel_shape[i] - 1) * dilations[i] + 1;
-  }
+    std::vector<int64_t> strides;
+    if (getRepeatedAttribute(ctx, "strides", strides)) {
+      if (strides.size() != n_input_dims) {
+        return;
+      }
+    } else {
+      strides.assign(n_input_dims, 1);
+    }
 
-  std::vector<int64_t> pads;
+    std::vector<int64_t> kernel_shape;
+    if (getRepeatedAttribute(ctx, "kernel_shape", kernel_shape)) {
+      if (kernel_shape.size() != n_input_dims) {
+        return;
+      }
+    } else {
+      auto second_input_shape = ctx.getInputType(1)->tensor_type().shape();
+      for (int i = 2; i < second_input_shape.dim_size(); ++i) {
+        if (!second_input_shape.dim(i).has_dim_value()) {
+          return;
+        }
+        kernel_shape.push_back(second_input_shape.dim(i).dim_value());
+      }
+    }
 
-  // Infer output shape if 'pads' tensor is available
-  const auto* pads_initializer = ctx.getInputData(2);
-  if (nullptr == pads_initializer) {
-    return;
-  }
+    std::vector<int64_t> effective_kernel_shape = kernel_shape;
+    for (int i = 0; i < static_cast<int>(kernel_shape.size()); i++) {
+      // accounting for dilation, how big is the kernel in this dimension
+      effective_kernel_shape[i] =
+          (effective_kernel_shape[i] - 1) * dilations[i] + 1;
+    }
 
-  if (pads_initializer->dims_size() != 1 ||
-      pads_initializer->data_type() != TensorProto::INT64)
-    fail_shape_inference(
-        "'pads' input must be a 1D (shape: [2 * n_input_dims]) tensor of type int64");
+    std::vector<int64_t> pads;
 
-  pads = ParseData<int64_t>(pads_initializer);
-
-  if (pads.size() != static_cast<size_t>(2 * n_input_dims))
-    fail_shape_inference("Pads has incorrect number of values");
-
-  std::vector<int64_t> output_shape;
-  bool output_shape_presented = true;
-  if (getRepeatedAttribute(ctx, "output_shape", output_shape)) {
-    if (output_shape.size() != n_input_dims) {
+    // Infer output shape if 'pads' tensor is available
+    const auto* pads_initializer = ctx.getInputData(2);
+    if (nullptr == pads_initializer) {
       return;
     }
-  } else {
-    output_shape_presented = false;
-  }
 
-  std::vector<int64_t> output_padding;
-  if (getRepeatedAttribute(ctx, "output_padding", output_padding)) {
-    if (output_padding.size() != n_input_dims) {  // Added only to one side.
-      return;
+    if (pads_initializer->dims_size() != 1 ||
+        pads_initializer->data_type() != TensorProto::INT64)
+      fail_shape_inference(
+          "'pads' input must be a 1D (shape: [2 * n_input_dims]) tensor of type int64");
+
+    pads = ParseData<int64_t>(pads_initializer);
+
+    if (pads.size() != static_cast<size_t>(2 * n_input_dims))
+      fail_shape_inference("Pads has incorrect number of values");
+
+    std::vector<int64_t> output_shape;
+    bool output_shape_presented = true;
+    if (getRepeatedAttribute(ctx, "output_shape", output_shape)) {
+      if (output_shape.size() != n_input_dims) {
+        return;
+      }
+    } else {
+      output_shape_presented = false;
     }
-  } else {
-    output_padding.assign(n_input_dims, 0);
-  }
 
-  auto final_output_shape =
-      ctx.getOutputType(0)->mutable_tensor_type()->mutable_shape();
+    std::vector<int64_t> output_padding;
+    if (getRepeatedAttribute(ctx, "output_padding", output_padding)) {
+      if (output_padding.size() != n_input_dims) {  // Added only to one side.
+        return;
+      }
+    } else {
+      output_padding.assign(n_input_dims, 0);
+    }
 
-  *final_output_shape->add_dim() = input_shape.dim(0);
-  *final_output_shape->add_dim() =
-      ctx.getInputType(1)->tensor_type().shape().dim(1) *
-      group;  // channels should be the second dim of second input multiply
-              // group.
+    auto final_output_shape =
+        ctx.getOutputType(0)->mutable_tensor_type()->mutable_shape();
 
-  int size_of_output;
-  if (output_shape_presented) {
-    size_of_output = static_cast<int>(output_shape.size());
-    for (int i = 0; i < size_of_output; ++i) {
-      if (input_shape.dim(i + 2).has_dim_value()) {
-        if (output_shape[i] < input_shape.dim(i + 2).dim_value()) {
-          // TODO: throw exception?
-          return;  // output shape value cannot be smaller than the input shape
-                   // value
+    *final_output_shape->add_dim() = input_shape.dim(0);
+    *final_output_shape->add_dim() =
+        ctx.getInputType(1)->tensor_type().shape().dim(1) *
+        group;  // channels should be the second dim of second input multiply
+                // group.
+
+    int size_of_output;
+    if (output_shape_presented) {
+      size_of_output = static_cast<int>(output_shape.size());
+      for (int i = 0; i < size_of_output; ++i) {
+        if (input_shape.dim(i + 2).has_dim_value()) {
+          if (output_shape[i] < input_shape.dim(i + 2).dim_value()) {
+            // TODO: throw exception?
+            return;  // output shape value cannot be smaller than the input shape
+                     // value
+          }
+        }
+        final_output_shape->add_dim()->set_dim_value(output_shape[i]);
+      }
+      return;
+    } else {
+      size_of_output = input_shape.dim_size() - 2;
+      for (int i = 0; i < size_of_output; ++i) {
+        if (input_shape.dim(i + 2).has_dim_value()) {
+          int64_t output_shape_dim =
+              strides[i] * (input_shape.dim(i + 2).dim_value() - 1) +
+              output_padding[i] + effective_kernel_shape[i] - pads[i] -
+              pads[i + n_input_dims];
+          final_output_shape->add_dim()->set_dim_value(output_shape_dim);
+        } else {
+          final_output_shape->add_dim();
         }
       }
-      final_output_shape->add_dim()->set_dim_value(output_shape[i]);
+      return;
     }
-    return;
-  } else {
-    size_of_output = input_shape.dim_size() - 2;
-    for (int i = 0; i < size_of_output; ++i) {
-      if (input_shape.dim(i + 2).has_dim_value()) {
-        int64_t output_shape_dim =
-            strides[i] * (input_shape.dim(i + 2).dim_value() - 1) +
-            output_padding[i] + effective_kernel_shape[i] - pads[i] -
-            pads[i + n_input_dims];
-        final_output_shape->add_dim()->set_dim_value(output_shape_dim);
-      } else {
-        final_output_shape->add_dim();
-      }
-    }
-    return;
   }
-}
 }  // namespace ONNX_NAMESPACE
 
 namespace onnxruntime {
@@ -356,8 +356,10 @@ and present state are optional. Present state could appear in output even when p
       .Input(0, "input", "3D input tensor with shape (batch_size, sequence_length, input_hidden_size)", "T")
       .Input(1, "weight", "2D input tensor with shape (input_hidden_size, 3 * hidden_size), where hidden_size = num_heads * head_size", "T")
       .Input(2, "bias", "1D input tensor with shape (3 * hidden_size)", "T")
-      .Input(3, "mask_index", "Attention mask with shape (batch_size, 1, max_sequence_length, max_sequence_length), (batch_size, past_sequence_length + sequence_length)"
-                "or (batch_size, sequence_length, past_sequence_length + sequence_length), or index with shape (batch_size) or (2 * batch_size).", "M", OpSchema::Optional)
+      .Input(3, "mask_index",
+             "Attention mask with shape (batch_size, 1, max_sequence_length, max_sequence_length), (batch_size, past_sequence_length + sequence_length)"
+             "or (batch_size, sequence_length, past_sequence_length + sequence_length), or index with shape (batch_size) or (2 * batch_size).",
+             "M", OpSchema::Optional)
       .Input(4, "past", "past state for key and value with shape (2, batch_size, num_heads, past_sequence_length, head_size).", "T", OpSchema::Optional)
       .Output(0, "output", "3D output tensor with shape (batch_size, append_length, hidden_size)", "T")
       .Output(1, "present", "present state for key and value with shape (2, batch_size, num_heads, past_sequence_length + sequence_length, head_size)", "T", OpSchema::Optional)
@@ -452,10 +454,8 @@ and present state are optional. Present state could appear in output even when p
 Longformer Self Attention with a local context and a global context. Tokens attend locally: Each token
 attends to its W previous tokens and W succeding tokens with W being the window length. A selected few tokens
 attend globally to all other tokens.
-
 The attention mask is of shape (batch_size, sequence_length), where sequence_length is a multiple of 2W after padding.
 Mask value < 0 (like -10000.0) means the token is masked, 0 otherwise.
-
 Global attention flags have value 1 for the tokens attend globally and 0 otherwise.
 )DOC";
 
@@ -473,35 +473,6 @@ Global attention flags have value 1 for the tokens attend globally and 0 otherwi
       .Input(5, "global_bias", "1D input tensor with shape (3 * hidden_size)", "T")
       .Input(6, "global", "Global attention flags with shape (batch_size, sequence_length)", "G")
       .Output(0, "output", "3D output tensor with shape (batch_size, sequence_length, hidden_size)", "T")
-      .TypeConstraint("T", {"tensor(float)", "tensor(float16)"}, "Constrain input and output types to float tensors.")
-      .TypeConstraint("G", {"tensor(int32)"}, "Constrain to integer types")
-      .TypeAndShapeInferenceFunction(ONNX_NAMESPACE::propagateShapeAndTypeFromFirstInput);
-
-      static const char* Longformer_Attention_doc = R"DOC(
-Longformer Self Attention with a local context and a global context. Tokens attend locally: Each token
-attends to its W previous tokens and W succeding tokens with W being the window length. A selected few tokens
-attend globally to all other tokens.
-
-The attention mask is of shape (batch_size, sequence_length), where sequence_length is a multiple of 2W after padding.
-Mask value < 0 (like -10000.0) means the token is masked, 0 otherwise.
-
-Global attention flags have value 1 for the tokens attend globally and 0 otherwise.
-)DOC";
-
-  ONNX_CONTRIB_OPERATOR_SCHEMA(LongformerAttention)
-      .SetDomain(kMSDomain)
-      .SinceVersion(1)
-      .SetDoc(Longformer_Attention_doc)
-      .Attr("num_heads", "Number of attention heads", AttributeProto::INT)
-      .Attr("window", "One sided attention windows length W, or half of total window length", AttributeProto::INT)
-      .Input(0, "input", "3D input tensor with shape (batch_size, sequence_length, hidden_size), hidden_size = num_heads * head_size", "T")
-      .Input(1, "weight", "2D input tensor with shape (hidden_size, 3 * hidden_size)", "T")
-      .Input(2, "bias", "1D input tensor with shape (3 * hidden_size)", "T")
-      .Input(3, "mask", "Attention mask with shape (batch_size, sequence_length)", "T")
-      .Input(4, "global_weight", "2D input tensor with shape (hidden_size, 3 * hidden_size)", "T")
-      .Input(5, "global_bias", "1D input tensor with shape (3 * hidden_size)", "T")
-      .Input(6, "global", "Global attention flags with shape (batch_size, sequence_length)", "G")
-      .Output(0, "output", "3D output tensor with shape (batch_size, append_length, hidden_size)", "T")
       .TypeConstraint("T", {"tensor(float)", "tensor(float16)"}, "Constrain input and output types to float tensors.")
       .TypeConstraint("G", {"tensor(int32)"}, "Constrain to integer types")
       .TypeAndShapeInferenceFunction(ONNX_NAMESPACE::propagateShapeAndTypeFromFirstInput);
